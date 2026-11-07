@@ -25,7 +25,8 @@ def test_cli_help_exits_successfully():
     assert result.returncode == 0, result.stderr
     assert "usage:" in result.stdout.lower()
     assert "--help" in result.stdout
-    assert "not implemented yet" in result.stdout
+    for option in ("--csv", "--schema", "--output"):
+        assert option in result.stdout
     assert result.stderr == ""
 
 

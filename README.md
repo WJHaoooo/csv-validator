@@ -1,252 +1,212 @@
 # Configurable CSV Validator & Converter
 
-Python CLI side project：未來依使用者提供的 CSV 與自訂 JSON Schema 設定，驗證資料並轉換成 JSON。這是自訂 Schema 格式，不宣稱完整支援 JSON Schema 標準。
+使用自訂 JSON Schema 設定驗證 UTF-8 CSV，將合法資料轉型並安全輸出 JSON 的 Python CLI side project。
+這是自訂 Schema 格式，不宣稱支援完整 JSON Schema 標準。
 
-## 目前狀態
+目前已完成 Schema 驗證、CSV 表頭與逐列驗證、型別轉換、CLI 整合及安全 JSON Writer。
+未提供 Web UI、GUI、資料庫、部署、自動修復、跳過錯誤列或錯誤彙整。
 
-Task 001 已完成專案骨架：`src` layout、editable install、CLI 說明入口與 pytest 環境。Task 002A 已加入自訂 Schema 的 UTF-8 載入、JSON 解析與基本結構驗證。Task 003A 已加入 CSV 第一筆 record 的表頭讀取與驗證。Task 003B 已加入 CSV 逐列驗證與 Python 型別轉換。尚未實作正式 JSON 檔案輸出或完整 CLI 整合。
+## Windows PowerShell 安裝
 
-執行 CLI 時目前只有 `--help` 可用，沒有 CSV、Schema 或輸出路徑參數；不帶參數會直接退出，不會執行轉換。
-
-## 預期完整 MVP（正式輸出與 CLI 整合尚未實作）
-
-- 先驗證自訂 Schema，再依其欄位設定處理 CSV，不使用固定欄位。
-- 支援 `int`、`float`、`str`。
-- `required: true` 要求欄位存在，每筆資料不得為空或僅含空白。
-- 採 Fail Fast；資料錯誤包含行數、欄位、原始值、預期型別與原因。
-- 全部驗證成功後才輸出 JSON；失敗時不能留下部分正式輸出。
-
-Decision 009～012 已確認：非必填欄位可缺失，未來輸出保留為 null；非必填儲存格為空或純空白時，未來轉為 null。額外欄位允許存在，未來不驗證也不輸出。表頭精確比對，大小寫敏感、不 trim，所有重複表頭都拒絕。Task 003B 已在 Python 結果中實作 None 補值與儲存格處理；JSON null 輸出留待後續任務。MVP 不包含 GUI、Web API、資料庫、登入、雲端部署或大型規則引擎。
-
-## 環境需求
-
-- Windows PowerShell、Git、Python 3.12 或更新版本。
-- 專案沒有第三方執行期依賴；開發依賴為 pytest，建置後端為 setuptools。
-- `requires-python = ">=3.12"` 定義最低安裝版本，不代表所有更新版本均已實測。
-- 本次環境為 Python 3.14.8；驗證範圍請見下方「驗證紀錄」。
-
-## Windows PowerShell 快速開始
-
-在專案根目錄 `csv-validator` 執行。`python` 必須指向預計使用的 Python 3.12+；不依賴 `py` 啟動器，也不需要啟用 venv 或變更 PowerShell Execution Policy。
+需要 Python 3.12+、Git。請確認 `python` 指向預計使用的版本。
+本機實測 Python 3.14.8；最低版本設定不代表所有 Python 版本均已實測。
 
 ```powershell
+Set-Location C:\Hao\csv-validator
 python --version
-python -c "import sys; print(sys.executable); assert sys.version_info >= (3, 12), 'Python 3.12+ is required'"
+python -c "import sys; assert sys.version_info >= (3, 12), 'Python 3.12+ is required'"
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e ".[dev]"
-.\.venv\Scripts\python.exe -c "import csv_validator; print(csv_validator.__file__)"
 .\.venv\Scripts\python.exe -m csv_validator.cli --help
-.\.venv\Scripts\python.exe -m pytest
+.\.venv\Scripts\python.exe -m pytest -q
 ```
 
-安裝指令會安裝本專案與 pytest，並在建置隔離環境安裝 setuptools；第一次安裝通常需要存取套件索引。Editable install 會讓 `src` 中的修改直接生效。
+直接使用 venv Python，不需啟用腳本或調整 Execution Policy。
+無第三方執行期依賴；開發依賴只有 pytest 及其必要依賴，setuptools 為建置後端。
+首次安裝通常需要連線至套件索引。
 
-若要啟用虛擬環境，可選擇執行 `.\.venv\Scripts\Activate.ps1`，之後使用 `python -m csv_validator.cli --help` 與 `python -m pytest`。若 PowerShell 阻擋啟用腳本，直接使用上述完整 venv Python 路徑即可。
+若 pytest 或 package 無法匯入，使用同一個 venv Python 重跑 editable install。
+不要用手動設定 PYTHONPATH 掩蓋安裝問題。Python 版本不足時，改用正確的 Python 重新建立 venv。
 
-## 常見環境問題
+## 使用 CLI
 
-- Python 低於 3.12：先安裝受支援版本，使用正確的 Python 執行檔重新建立 venv。pip 也會依 `requires-python` 拒絕不相容版本。
-- 安裝失敗：查看 pip 錯誤，確認網路、套件索引及 Python 版本，再重新執行 editable install；未成功安裝前不能視為驗證通過。
-- `No module named pytest`：使用同一個 venv Python 重新執行 `-m pip install -e ".[dev]"`。
-- 無法匯入 `csv_validator` 或執行 CLI：確認目前在專案根目錄、editable install 成功，且使用的是同一個 venv Python。不要藉由手動設定 `PYTHONPATH` 掩蓋安裝問題。
-
-## Schema API（Task 002A）
-
-本階段透過 Python API 使用 Schema，CLI 維持原本的 help-only 行為。
-
-```python
-from csv_validator.schema import SchemaError, load_schema
-
-try:
-    schema = load_schema("schema.json")
-except SchemaError as error:
-    print(error)
-else:
-    print(schema["columns"])
-```
-
-最小合法的 UTF-8 `schema.json`：
+準備 UTF-8 `schema.json`：
 
 ```json
 {
   "columns": {
-    "id": {"type": "int", "required": true}
+    "id": {"type": "int", "required": true},
+    "name": {"type": "str", "required": true},
+    "score": {"type": "float", "required": false}
   }
 }
 ```
 
-- `load_schema(path)`：接受字串或 PathLike，讀取 UTF-8 檔案，解析並驗證後回傳 dict。
-- `parse_schema(text)`：解析 JSON 字串，拒絕任何層級的重複 object key，再檢查結構。
-- `validate_schema(data)`：驗證已解析的 Python 結構，回傳原 dict；不複製或正規化欄位名稱，也不修改資料。
-- `SchemaError(ValueError)`：讀取、解碼、JSON 語法或結構錯誤；訊息提供檔案路徑（透過 loader）、問題位置與原因。原始例外保留於 `__cause__`。
+準備 UTF-8 `input.csv`：
 
-Schema 契約：
-
-1. 根節點只能包含 `columns`，且 `columns` 必須是非空 object。
-2. 欄位名稱不得為空或純空白；非空白名稱原樣保留。
-3. 欄位設定只能包含 `type` 與 `required`，兩者皆必填。
-4. `type` 僅接受大小寫敏感的 `int`、`float`、`str`。
-5. `required` 僅接受 JSON boolean，數字與字串均拒絕。
-6. 接受 JSON 合法的空白與換行；拒絕重複 key 與非標準的 `NaN` / `Infinity` 常數。
-
-遇到錯誤即拋出例外，不收集全部錯誤。例如：
-`$["columns"]["id"]["required"]: expected a JSON boolean`。
-讀取與 JSON 解析先於結構檢查；多個問題同時存在時，不保證跨階段按文字位置回報。
-若資料已被其他解析器轉成 dict，重複 key 的資訊已遺失；需使用 `load_schema` 或 `parse_schema` 才能保證檢查重複 key。
-
-Schema 回傳值仍可修改；呼叫者應保留驗證結果，不應在修改後假設仍然合法。
-本模組只讀取檔案，不產生輸出。檔案一次載入記憶體，目前不設定檔案大小或巢狀深度限制。
-`required` 的 CSV 資料驗證行為由 Task 003B 的 converter 負責。
-
-## CSV 表頭 API（Task 003A）
-
-正式檔案處理請使用整合入口，先載入 Schema，再讀 CSV：
-
-```python
-from csv_validator.schema import load_schema
-from csv_validator.csv_reader import load_csv_header
-
-schema = load_schema("schema.json")
-headers = load_csv_header("input.csv", schema)
-print(headers)
+```csv
+id,name,score,city
+001,Hao,95.5,Taipei
+2,Amy,,Taichung
+3,Bob,80,Kaohsiung
 ```
 
-- `load_csv_header(path, schema)`：先重用 `validate_schema` 確認 Schema，再開啟 CSV，讀取並驗證表頭。成功回傳依原順序保留名稱的 list。
-- `read_csv_header(path)`：低階讀取函式，只解析第一筆 CSV record，不保證名稱合法或符合 Schema。不可把它的回傳值當作已通過驗證的表頭。
-- `validate_headers(headers, schema)`：獨立驗證表頭，也會重用既有 Schema Validator，成功回傳原 list。整合入口與此函式都保留 Schema 防護，未另寫 Schema 驗證規則。
-- `CSVHeaderError(ValueError)`：檔案、UTF-8、CSV 解析與表頭錯誤。整合入口的 CSV 錯誤附檔案路徑，適用時附表頭名稱；Schema 本身錯誤維持 `SchemaError`。
+若目錄已經有同名驗收檔，請保留原檔或另選檔名，勿直接覆寫。
 
-UTF-8、逗號分隔，採用 `csv.reader(..., strict=True)` 與 `newline=""`。
-第一筆 record 就是表頭，不跳過開頭空白 record。空檔、空 record、空字串或純空白名稱皆拒絕。
-表頭名稱完全精確比對，保留大小寫、前後空白、引號內逗號與換行。
-所有名稱（含額外欄位）都先檢查重複，再檢查 Schema 必要欄位。
+```powershell
+.\.venv\Scripts\python.exe -m csv_validator.cli --csv input.csv --schema schema.json --output output.json
+Get-Content -LiteralPath output.json -Encoding utf8
+```
 
-`required: false` 不要求欄位出現在表頭，因此 `id,name,city` 可符合有必要欄位 `id`、`name` 及非必填欄位 `score` 的 Schema。
-此表頭 API 不補值，也不刪除回傳表頭中的額外欄位 `city`；Task 003B 的 converter 才會依 Schema 建立結果、補 None 並忽略額外欄位。
+成功會顯示 `Converted 3 records to ...`，退出碼為 0。
+輸出為 UTF-8 JSON，縮排 2 spaces、保留 Unicode、不排序 key：
 
-不能直接使用 `split(",")`，因為 `"full,name",age` 是兩個欄位；CSV parser 還須處理跳脫雙引號與跨實體行的 record。
-重複表頭若直接與資料列組成 dict，同名 key 可能覆寫先前值而遺失資料，因此必須先拒絕。
+```json
+[
+  {
+    "id": 1,
+    "name": "Hao",
+    "score": 95.5
+  },
+  {
+    "id": 2,
+    "name": "Amy",
+    "score": null
+  },
+  {
+    "id": 3,
+    "name": "Bob",
+    "score": 80.0
+  }
+]
+```
 
-範圍與限制：
+只有表頭、沒有資料 record 時輸出空陣列。
+CLI 不帶參數或缺少任何必要參數時，由 argparse 顯示說明並以 2 退出。
 
-- 只解析第一筆 record，不檢查後續 record 的語法、欄位數量或資料值。
-- 共用讀取器延後至各實體行被 CSV parser 消耗時才嚴格檢查 UTF-8，避免後續資料錯誤被誤報為表頭錯誤；只讀表頭成功不代表整份 CSV 已驗證。
-- `strict=True` 不是所有 CSV 變體的完整格式檢查器；例如未加引號欄位內的單獨雙引號，標準函式庫可能視為文字接受。
-- 未提供其他編碼、自動偵測、其他分隔符號或 BOM 特殊處理；UTF-8 BOM 不會自動從名稱移除。
-- 沿用標準函式庫的欄位長度限制；超限會回報 CSV 解析錯誤。
-- 此表頭 API 不執行資料列驗證或型別轉換；完整 Python 結果請使用下方 converter。CLI 保持 help-only。
+| 結果 | 退出碼 | 訊息 |
+|---|---:|---|
+| 完成寫入 | 0 | stdout 成功訊息 |
+| CLI 參數錯誤 | 2 | stderr 使用說明 |
+| Schema、CSV 或輸出失敗 | 1 | stderr 路徑及原因；資料錯誤保留行數與欄位資訊 |
 
-## CSV 逐列轉換 API（Task 003B）
+一般輸入錯誤不顯示 traceback。非預期程式錯誤不會被廣泛捕捉而隱藏。
+
+## 資料契約
+
+- Schema 根節點只能包含非空 `columns` object。
+- 欄位名稱不得為空或純空白。設定只能包含必填的 `type`、`required`。
+- type 大小寫敏感，僅接受 `int`、`float`、`str`；required 必須為 JSON boolean。
+- JSON 任何層級的重複 key 均拒絕，亦拒絕 NaN、Infinity 等非標準常數。
+- Schema 先驗證，才檢查輸出路徑及處理 CSV。
+- CSV 為 UTF-8、逗號分隔、標準雙引號規則；使用 `csv.reader(strict=True)` 與 `newline=""`。
+- 第一筆 record 為表頭，不跳過開頭空 record。表頭空白或重複均拒絕，包含額外欄位。
+- 表頭精確比對：大小寫敏感、不 trim。欄位依名稱對應，不依固定位置。
+- 必填欄位必須存在，且每筆儲存格不可為空或純空白。
+- 非必填欄位缺失或儲存格空白時填 None，寫成 JSON null；非空但型別錯誤仍拒絕。
+- 額外欄位不驗證內容、不輸出，但每筆 record 欄位數仍須與整份表頭完全相同。
+- 缺少尾端儲存格也報欄位數錯誤；空尾端儲存格必須保留逗號。
+- int 先 strip，只接受 `[+-]?[0-9]+`，允許前導零。
+- float 先 strip，接受 ASCII 十進位、正負號、小數與科學記號，包括 `.5`、`5.`；拒絕底線、千分位與非有限結果。
+- str 非空時保留原始字串，不去除前後空白。
+- dict key 依 Schema 順序，結果 list 保留 CSV record 順序。
+- Fail Fast：欄位數先於儲存格檢查，同列儲存格依 Schema 順序檢查。
+
+## 安全 JSON 輸出
+
+本次暫行限制為「輸出已存在就拒絕」，不提供覆寫選項。
+
+1. CLI 載入並驗證 Schema。
+2. 檢查輸出路徑：不得與 CSV／Schema 路徑相同，不接受既有目的地，父目錄必須存在。
+3. 呼叫 converter，全部資料成功後才交給 writer。
+4. Writer 再檢查路徑，完整序列化為 UTF-8 bytes，設定 `allow_nan=False`。
+5. 在輸出同目錄建立獨占暫存檔，完成 write、flush、fsync 並關閉。
+6. Windows 用 `os.rename` 發布，目的地在競爭期間被建立時仍拒絕覆寫。
+   其他平台用 `os.link` 建立新名稱，無覆寫型 fallback。
+7. 寫入／發布成功後才顯示成功訊息；失敗時盡可能清理暫存檔。
+
+早期 exists 檢查只是友善錯誤，真正的競爭保護在最後的 no-replace 發布操作。
+不使用 `os.replace`，也不直接打開正式路徑逐步寫入。
+既有檔案、目錄與 dangling symlink 都會被拒絕；輸入路徑比較會解析相對路徑及 symlink alias。
+
+如果暫存清理失敗，會發出警告並保留原本發布錯誤。
+若發布已成功，清理警告代表正式 JSON 已完整寫入、但可能殘留暫存名稱，不代表正式輸出不完整。
+
+Windows rename 的不覆寫行為見 [Python 官方文件](https://docs.python.org/3/library/os.html#os.rename)。
+此策略保護正常並行 writer 的同名競爭，不承諾斷電後目錄 metadata 的持久性或抵禦惡意替換整個父目錄。
+
+## Python API 與模組責任
 
 ```python
 from csv_validator.schema import load_schema
-from csv_validator.converter import convert_csv, CSVRowError
+from csv_validator.converter import convert_csv
+from csv_validator.writer import write_json
 
 schema = load_schema("schema.json")
 rows = convert_csv("input.csv", schema)
-print(rows)  # Python list[dict]，不會寫入 JSON 檔案
+write_json(rows, "output.json", input_paths=("input.csv", "schema.json"))
 ```
 
-`convert_csv(path, schema)` 先重用 Schema Validator，再以同一個 reader 驗證表頭與逐筆 record。
-每筆先檢查欄位數與表頭完全一致，才依 Schema 順序處理值；CSV 額外欄位不驗證內容、不輸出。
-欄位依名稱對應，因此 CSV 欄位可任意排列。回傳 dict 的 key 依 Schema 順序，list 依 CSV 原順序。
+- schema.py：`load_schema` 負責 UTF-8 I/O；`parse_schema` 解析並拒絕重複 key；`validate_schema` 驗證結構，回傳原 dict。
+- csv_reader.py：`read_csv_header` 只解析；`validate_headers` 驗證；`load_csv_header` 整合兩者。共用 reader 支援 converter 使用同一串流。
+- converter.py：`convert_csv` 驗證所有 record，成功後回傳 list，不寫檔。
+- writer.py：`check_output_path` 檢查路徑；`write_json` 接收已驗證資料，負責序列化、暫存與發布，不重做資料驗證。
+- cli.py：只協調以上模組、訊息及退出碼，不含逐列規則。
 
-- 必填儲存格為空或純空白時報錯。
-- 非必填欄位缺失或儲存格為空／純空白時填入 Python `None`；非空的非法型別仍報錯。
-- 缺少尾端儲存格也會觸發欄位數錯誤；空尾端儲存格必須保留逗號。
-- 表頭後沒有 record 時回傳 `[]`。空白 record 不會被跳過，仍依欄位數檢查。
-- `int`：strip 後只接受 `[+-]?[0-9]+`，支援前導零，拒絕小數、底線、非 ASCII 數字等格式。
-- `float`：strip 後接受 ASCII 十進位、可選正負號、小數及科學記號，包括 `.5` 與 `5.`。拒絕底線、千分位、NaN、Infinity 與轉型溢位後的非有限值。
-- `str`：非空時保留原始內容，包括前後空白與引號內換行。
+錯誤類型為 `SchemaError`、`CSVHeaderError`、`CSVRowError`、`JSONWriteError`。
+資料錯誤含路徑、record 起始實體行數，適用時含欄位、原始值、預期型別與原因。
+起始行數使用讀取前的 `reader.line_num + 1`，支援引號中的換行，不以列索引加 2 推算。
 
-錯誤分工：
-
-- `SchemaError`：Schema 不合法，CSV 尚未開啟。
-- `CSVHeaderError`：開檔失敗、空檔或表頭解析／驗證失敗。
-- `CSVRowError`：資料 record 的欄位數、解析、讀取、UTF-8 或儲存格轉型錯誤。
-  儲存格錯誤含 `path`、`line`、`column`、`raw_value`、`expected_type`；訊息保留原因。
-  欄位數錯誤含預期與實際數量；無法解析 record 時不虛構欄位或原始儲存格值。
-
-`line` 是 record 的起始實體行數，每次讀取前使用 `reader.line_num + 1`，因此支援多行表頭／資料。
-只在所有 record 成功後回傳完整 list；第一個錯誤立即拋出，不回傳部分結果，也不產生任何正式輸出。
-同一列多個儲存格錯誤依 Schema 順序回報，record 欄位數錯誤先於儲存格錯誤。
-
-讀取器以 `surrogateescape` 暫存緩衝預讀時遇到的無效 UTF-8 位元組，再於各實體行被消耗時嚴格重新解碼。
-這不是容錯接受資料；無效位元組仍被拒絕，但可正確區分表頭與資料 record 的錯誤。
-`open_csv_reader` 管理檔案生命週期，`read_header_record` 共用表頭解析；原有表頭對外函式仍可使用。
-
-技術限制：
-
-- 全部結果存於記憶體，尚無大型檔案架構或正式 CLI 轉換參數。
-- float 使用 Python 二進位浮點數，可能有一般的精度捨入與極小值下溢；不提供十進位精度保證。
-- 超長整數仍受 Python 執行環境的十進位轉換長度限制，失敗時包為可定位的 CSVRowError。
-- CSV 方言、欄位長度、BOM 等限制沿用上方讀取規格，未自行擴張支援。
-- 不提供 JSON Writer、跳過錯誤列、自動修復、錯誤彙整或 Web UI。
+文字串流先用 surrogateescape 暫存預讀的無效位元組，再於實體行被 parser 消耗時嚴格解碼，
+因此無效 UTF-8 仍會拒絕，且可正確歸屬表頭或資料 record。
+只有低階表頭讀取成功不代表整份 CSV 合法。
 
 ## 專案結構
 
 ```text
 csv-validator/
-├── src/
-│   └── csv_validator/
-│       ├── __init__.py
-│       ├── cli.py
-│       ├── converter.py
-│       ├── csv_reader.py
-│       └── schema.py
+├── src/csv_validator/
+│   ├── __init__.py
+│   ├── cli.py
+│   ├── converter.py
+│   ├── csv_reader.py
+│   ├── schema.py
+│   └── writer.py
 ├── tests/
+│   ├── test_cli.py
 │   ├── test_converter.py
 │   ├── test_csv_reader.py
 │   ├── test_project_setup.py
-│   └── test_schema.py
+│   ├── test_schema.py
+│   └── test_writer.py
 ├── pyproject.toml
 ├── .gitignore
 └── README.md
 ```
 
-## 驗證紀錄
+## 測試與限制
 
-2026-11-07，在 Windows / Python 3.14.8 / pytest 9.2.0 上實測：
+```powershell
+.\.venv\Scripts\python.exe -m pytest -q
+.\.venv\Scripts\python.exe -m pip check
+```
 
-- `python -m venv .venv` 與 editable install 成功。
-- Package import 與 CLI `--help` 成功（退出碼 0）。
-- `python -m pytest`：3 項測試通過。
-- `python -m pip check`：無損壞的依賴需求。
-- Git 忽略規則已檢查，涵蓋 venv、快取、bytecode 與 build/packaging 產物。
+2026-11-07：Windows / Python 3.14.8 / pytest 9.2.0，Task 004 最終完整測試 234 passed（4.98 秒）。
+包括既有 191 項（help 測試改為檢查新 CLI 選項），新增 43 項 CLI／Writer 測試。
+測試含真正 subprocess CLI、Unicode/null/順序、錯誤退出碼、無部分輸出、競爭發布及暫存故障注入。
 
-Codex 沙箱首次建立 venv 時曾阻擋暫存目錄寫入，已經授權流程在沙箱外重試成功。一般 PowerShell 可直接使用上述指令。
+Task 003B 已提交為 `3cc717f`；Task 004 變更保持未提交，未加入使用者的 input.csv、schema.json，未 push。
+專案仍無第三方執行期依賴。
 
-Python 3.12 及其他 Python 版本尚未實測；本機 `py` 啟動器未找到已登錄的 Python，因此操作步驟採用可用的 `python` 指令。
+限制：
 
-### Task 002A 驗證紀錄
+- Python 3.12、其他 Python 版本及非 Windows 發布分支尚未實測。
+- 結果、JSON 字串與 UTF-8 bytes 存於記憶體；未設計大型資料串流框架。
+- float 使用二進位浮點數，存在一般捨入與極小值下溢；超長 int 受 Python 轉換長度限制。
+- 沿用 csv 欄位長度限制；strict 模式不是所有 CSV 變體的完整格式檢查器。
+- 不自動偵測編碼／分隔符號，也不移除 UTF-8 BOM。
+- Schema dict 可修改；修改後須重新驗證。若其他 JSON parser 已覆寫重複 key，結構驗證無法還原，需使用本專案 loader/parser。
+- POSIX 發布依賴同檔案系統 hard link；不支援時明確失敗，不退回覆寫方案。
+- 磁碟或程序突然中止可能殘留暫存檔；不保證斷電後 metadata 持久性。
 
-2026-11-07，Windows / Python 3.14.8 / pytest 9.2.0：
-
-- Task 001 初始提交：`4b1eeec`（`chore: initialize csv validator project`）。
-- `.\.venv\Scripts\python.exe -m pytest`：69 項通過（原有 3 項與 Schema 66 項）。
-- CLI `--help` 回歸驗證成功。
-- 未新增第三方依賴；Task 002A 於 Task 003A 開始前提交為 `000b0b4`（`feat: add schema validation`）。
-- Python 3.12 及其他版本尚未實測。
-
-### Task 003A 驗證紀錄
-
-2026-11-07，Windows / Python 3.14.8 / pytest 9.2.0：
-
-- 完整 pytest：111 項通過（既有 69 項，新增 CSV 表頭 42 項）。
-- CLI `--help` 回歸驗證成功。
-- Task 002A 提交前僅清除兩個檔案末尾的多餘空白行，無功能重構。
-- Task 003A 於 Task 003B 開始前提交為 `9e4348e`（`feat: add csv header validation`）；未新增依賴或遠端設定。
-- 沙箱內首次測試因 pytest 暫存目錄權限發生 9 個 setup error，沙箱外重跑既有 69 項與完整 111 項均通過。
-- Python 3.12 及其他版本尚未實測。
-
-### Task 003B 驗證紀錄
-
-2026-11-07，Windows / Python 3.14.8 / pytest 9.2.0：
-
-- Task 003A 已提交為 `9e4348e`（`feat: add csv header validation`），不含使用者的 `input.csv` 與 `schema.json`。
-- `.\.venv\Scripts\python.exe -m pytest -q --tb=short`：191 passed（既有 111 項、新增 80 項），最終執行 0.82 秒。
-- 覆蓋數字格式、空值、缺失欄位、額外欄位、Schema key／record 順序、欄位數錯誤、UTF-8、嚴格解析、多行 record 實體行號、Fail Fast、不產生輸出與回歸。
-- CLI `--help` 與 `pip check` 正常；CLI 僅更新狀態說明，未加入轉換參數。
-- 已只讀手動驗收現有 `input.csv`／`schema.json`：回傳三筆 Python dict，缺失 score 均為 None，city 被忽略。
-- Task 003B 變更保持未提交，未新增第三方依賴，未實作 JSON Writer 或 Web UI。
-- Python 3.12 及其他版本尚未實測。
+另以現有 input.csv、schema.json 在獨立暫存目錄完成 CLI 實測：第一次退出碼 0；再次寫入同一路徑退出碼 1，輸出原始內容不變。驗收輸入檔未修改，測試輸出已清除。
