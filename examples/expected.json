@@ -1,0 +1,17 @@
+[
+  {
+    "id": 1,
+    "name": "Example Alpha",
+    "score": 95.5
+  },
+  {
+    "id": 2,
+    "name": "範例乙",
+    "score": null
+  },
+  {
+    "id": -3,
+    "name": "  Example Gamma  ",
+    "score": 80.0
+  }
+]

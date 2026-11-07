@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "configurable-csv-validator"
 version = "0.1.0"
-description = "A configurable CSV validator and converter (project scaffold)."
+description = "Schema-driven CSV validation and JSON conversion tool built with Python."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = []

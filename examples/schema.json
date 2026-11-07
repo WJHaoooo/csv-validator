@@ -1,0 +1,7 @@
+{
+  "columns": {
+    "id": {"type": "int", "required": true},
+    "name": {"type": "str", "required": true},
+    "score": {"type": "float", "required": false}
+  }
+}

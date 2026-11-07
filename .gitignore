@@ -17,3 +17,17 @@ dist/
 *.egg-info/
 *.egg
 .eggs/
+
+# Temporary writer files and local secrets
+*.tmp
+.env
+.env.*
+
+# Local manual acceptance files (public fixtures live in examples/)
+/input.csv
+/schema.json
+/output-task004.json
+
+# Generated README demonstration outputs
+/output.json
+/invalid-output.json
