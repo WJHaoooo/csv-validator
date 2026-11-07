@@ -7,8 +7,8 @@ def main() -> int:
     """Parse the help-only CLI arguments."""
     parser = argparse.ArgumentParser(
         description=(
-            "Configurable CSV Validator & Converter: project scaffold only. "
-            "CSV validation and conversion are not implemented yet."
+            "Configurable CSV Validator & Converter: help-only CLI. "
+            "CLI integration for CSV validation and conversion is not implemented yet."
         ),
     )
     parser.parse_args()

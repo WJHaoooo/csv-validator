@@ -4,11 +4,11 @@ Python CLI side project：未來依使用者提供的 CSV 與自訂 JSON Schema 
 
 ## 目前狀態
 
-Task 001 已完成專案骨架：`src` layout、editable install、CLI 說明入口與 pytest 環境。Task 002A 已加入自訂 Schema 的 UTF-8 載入、JSON 解析與基本結構驗證。Task 003A 已加入 CSV 第一筆 record 的表頭讀取與驗證。尚未實作 CSV 資料列驗證、資料型別轉換與 JSON 輸出。
+Task 001 已完成專案骨架：`src` layout、editable install、CLI 說明入口與 pytest 環境。Task 002A 已加入自訂 Schema 的 UTF-8 載入、JSON 解析與基本結構驗證。Task 003A 已加入 CSV 第一筆 record 的表頭讀取與驗證。Task 003B 已加入 CSV 逐列驗證與 Python 型別轉換。尚未實作正式 JSON 檔案輸出或完整 CLI 整合。
 
 執行 CLI 時目前只有 `--help` 可用，沒有 CSV、Schema 或輸出路徑參數；不帶參數會直接退出，不會執行轉換。
 
-## 預期完整 MVP（資料列與輸出功能尚未實作）
+## 預期完整 MVP（正式輸出與 CLI 整合尚未實作）
 
 - 先驗證自訂 Schema，再依其欄位設定處理 CSV，不使用固定欄位。
 - 支援 `int`、`float`、`str`。
@@ -16,7 +16,7 @@ Task 001 已完成專案骨架：`src` layout、editable install、CLI 說明入
 - 採 Fail Fast；資料錯誤包含行數、欄位、原始值、預期型別與原因。
 - 全部驗證成功後才輸出 JSON；失敗時不能留下部分正式輸出。
 
-Decision 009～012 已確認：非必填欄位可缺失，未來輸出保留為 null；非必填儲存格為空或純空白時，未來轉為 null。額外欄位允許存在，未來不驗證也不輸出。表頭精確比對，大小寫敏感、不 trim，所有重複表頭都拒絕。本階段只實作表頭行為，尚未實作 null 補值與儲存格處理。MVP 不包含 GUI、Web API、資料庫、登入、雲端部署或大型規則引擎。
+Decision 009～012 已確認：非必填欄位可缺失，未來輸出保留為 null；非必填儲存格為空或純空白時，未來轉為 null。額外欄位允許存在，未來不驗證也不輸出。表頭精確比對，大小寫敏感、不 trim，所有重複表頭都拒絕。Task 003B 已在 Python 結果中實作 None 補值與儲存格處理；JSON null 輸出留待後續任務。MVP 不包含 GUI、Web API、資料庫、登入、雲端部署或大型規則引擎。
 
 ## 環境需求
 
@@ -96,7 +96,7 @@ Schema 契約：
 
 Schema 回傳值仍可修改；呼叫者應保留驗證結果，不應在修改後假設仍然合法。
 本模組只讀取檔案，不產生輸出。檔案一次載入記憶體，目前不設定檔案大小或巢狀深度限制。
-`required` 的 CSV 資料驗證行為尚未實作。
+`required` 的 CSV 資料驗證行為由 Task 003B 的 converter 負責。
 
 ## CSV 表頭 API（Task 003A）
 
@@ -122,7 +122,7 @@ UTF-8、逗號分隔，採用 `csv.reader(..., strict=True)` 與 `newline=""`。
 所有名稱（含額外欄位）都先檢查重複，再檢查 Schema 必要欄位。
 
 `required: false` 不要求欄位出現在表頭，因此 `id,name,city` 可符合有必要欄位 `id`、`name` 及非必填欄位 `score` 的 Schema。
-本階段不產生 JSON，故不補 `score: null`，也不刪除回傳表頭中的額外欄位 `city`。
+此表頭 API 不補值，也不刪除回傳表頭中的額外欄位 `city`；Task 003B 的 converter 才會依 Schema 建立結果、補 None 並忽略額外欄位。
 
 不能直接使用 `split(",")`，因為 `"full,name",age` 是兩個欄位；CSV parser 還須處理跳脫雙引號與跨實體行的 record。
 重複表頭若直接與資料列組成 dict，同名 key 可能覆寫先前值而遺失資料，因此必須先拒絕。
@@ -130,11 +130,58 @@ UTF-8、逗號分隔，採用 `csv.reader(..., strict=True)` 與 `newline=""`。
 範圍與限制：
 
 - 只解析第一筆 record，不檢查後續 record 的語法、欄位數量或資料值。
-- 文字串流可能預讀並解碼表頭之後的位元組，因此附近的無效 UTF-8 也可能使讀取失敗；成功不代表整份 CSV 已驗證。
+- 共用讀取器延後至各實體行被 CSV parser 消耗時才嚴格檢查 UTF-8，避免後續資料錯誤被誤報為表頭錯誤；只讀表頭成功不代表整份 CSV 已驗證。
 - `strict=True` 不是所有 CSV 變體的完整格式檢查器；例如未加引號欄位內的單獨雙引號，標準函式庫可能視為文字接受。
 - 未提供其他編碼、自動偵測、其他分隔符號或 BOM 特殊處理；UTF-8 BOM 不會自動從名稱移除。
 - 沿用標準函式庫的欄位長度限制；超限會回報 CSV 解析錯誤。
-- 無資料列驗證、型別轉換或任何正式輸出，CLI 保持原有 `--help`。
+- 此表頭 API 不執行資料列驗證或型別轉換；完整 Python 結果請使用下方 converter。CLI 保持 help-only。
+
+## CSV 逐列轉換 API（Task 003B）
+
+```python
+from csv_validator.schema import load_schema
+from csv_validator.converter import convert_csv, CSVRowError
+
+schema = load_schema("schema.json")
+rows = convert_csv("input.csv", schema)
+print(rows)  # Python list[dict]，不會寫入 JSON 檔案
+```
+
+`convert_csv(path, schema)` 先重用 Schema Validator，再以同一個 reader 驗證表頭與逐筆 record。
+每筆先檢查欄位數與表頭完全一致，才依 Schema 順序處理值；CSV 額外欄位不驗證內容、不輸出。
+欄位依名稱對應，因此 CSV 欄位可任意排列。回傳 dict 的 key 依 Schema 順序，list 依 CSV 原順序。
+
+- 必填儲存格為空或純空白時報錯。
+- 非必填欄位缺失或儲存格為空／純空白時填入 Python `None`；非空的非法型別仍報錯。
+- 缺少尾端儲存格也會觸發欄位數錯誤；空尾端儲存格必須保留逗號。
+- 表頭後沒有 record 時回傳 `[]`。空白 record 不會被跳過，仍依欄位數檢查。
+- `int`：strip 後只接受 `[+-]?[0-9]+`，支援前導零，拒絕小數、底線、非 ASCII 數字等格式。
+- `float`：strip 後接受 ASCII 十進位、可選正負號、小數及科學記號，包括 `.5` 與 `5.`。拒絕底線、千分位、NaN、Infinity 與轉型溢位後的非有限值。
+- `str`：非空時保留原始內容，包括前後空白與引號內換行。
+
+錯誤分工：
+
+- `SchemaError`：Schema 不合法，CSV 尚未開啟。
+- `CSVHeaderError`：開檔失敗、空檔或表頭解析／驗證失敗。
+- `CSVRowError`：資料 record 的欄位數、解析、讀取、UTF-8 或儲存格轉型錯誤。
+  儲存格錯誤含 `path`、`line`、`column`、`raw_value`、`expected_type`；訊息保留原因。
+  欄位數錯誤含預期與實際數量；無法解析 record 時不虛構欄位或原始儲存格值。
+
+`line` 是 record 的起始實體行數，每次讀取前使用 `reader.line_num + 1`，因此支援多行表頭／資料。
+只在所有 record 成功後回傳完整 list；第一個錯誤立即拋出，不回傳部分結果，也不產生任何正式輸出。
+同一列多個儲存格錯誤依 Schema 順序回報，record 欄位數錯誤先於儲存格錯誤。
+
+讀取器以 `surrogateescape` 暫存緩衝預讀時遇到的無效 UTF-8 位元組，再於各實體行被消耗時嚴格重新解碼。
+這不是容錯接受資料；無效位元組仍被拒絕，但可正確區分表頭與資料 record 的錯誤。
+`open_csv_reader` 管理檔案生命週期，`read_header_record` 共用表頭解析；原有表頭對外函式仍可使用。
+
+技術限制：
+
+- 全部結果存於記憶體，尚無大型檔案架構或正式 CLI 轉換參數。
+- float 使用 Python 二進位浮點數，可能有一般的精度捨入與極小值下溢；不提供十進位精度保證。
+- 超長整數仍受 Python 執行環境的十進位轉換長度限制，失敗時包為可定位的 CSVRowError。
+- CSV 方言、欄位長度、BOM 等限制沿用上方讀取規格，未自行擴張支援。
+- 不提供 JSON Writer、跳過錯誤列、自動修復、錯誤彙整或 Web UI。
 
 ## 專案結構
 
@@ -144,9 +191,11 @@ csv-validator/
 │   └── csv_validator/
 │       ├── __init__.py
 │       ├── cli.py
+│       ├── converter.py
 │       ├── csv_reader.py
 │       └── schema.py
 ├── tests/
+│   ├── test_converter.py
 │   ├── test_csv_reader.py
 │   ├── test_project_setup.py
 │   └── test_schema.py
@@ -186,6 +235,18 @@ Python 3.12 及其他 Python 版本尚未實測；本機 `py` 啟動器未找到
 - 完整 pytest：111 項通過（既有 69 項，新增 CSV 表頭 42 項）。
 - CLI `--help` 回歸驗證成功。
 - Task 002A 提交前僅清除兩個檔案末尾的多餘空白行，無功能重構。
-- 本次 Task 003A 變更保留未提交；未新增依賴或遠端設定。
+- Task 003A 於 Task 003B 開始前提交為 `9e4348e`（`feat: add csv header validation`）；未新增依賴或遠端設定。
 - 沙箱內首次測試因 pytest 暫存目錄權限發生 9 個 setup error，沙箱外重跑既有 69 項與完整 111 項均通過。
+- Python 3.12 及其他版本尚未實測。
+
+### Task 003B 驗證紀錄
+
+2026-11-07，Windows / Python 3.14.8 / pytest 9.2.0：
+
+- Task 003A 已提交為 `9e4348e`（`feat: add csv header validation`），不含使用者的 `input.csv` 與 `schema.json`。
+- `.\.venv\Scripts\python.exe -m pytest -q --tb=short`：191 passed（既有 111 項、新增 80 項），最終執行 0.82 秒。
+- 覆蓋數字格式、空值、缺失欄位、額外欄位、Schema key／record 順序、欄位數錯誤、UTF-8、嚴格解析、多行 record 實體行號、Fail Fast、不產生輸出與回歸。
+- CLI `--help` 與 `pip check` 正常；CLI 僅更新狀態說明，未加入轉換參數。
+- 已只讀手動驗收現有 `input.csv`／`schema.json`：回傳三筆 Python dict，缺失 score 均為 None，city 被忽略。
+- Task 003B 變更保持未提交，未新增第三方依賴，未實作 JSON Writer 或 Web UI。
 - Python 3.12 及其他版本尚未實測。
