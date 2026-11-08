@@ -68,7 +68,15 @@ def read_schema(upload: BinaryIO) -> dict:
     except UnicodeDecodeError as exc:
         raise APIError(422, "SCHEMA_ERROR", "Schema must be valid UTF-8.") from exc
     try:
-        return parse_schema(text)
+        schema = parse_schema(text)
+        # JSON escapes can encode lone surrogates despite valid UTF-8 bytes.
+        # They cannot be safely rendered/encoded into a UTF-8 API response.
+        for name in schema["columns"]:
+            try:
+                name.encode("utf-8")
+            except UnicodeEncodeError as exc:
+                raise APIError(422, "SCHEMA_ERROR", "Schema contains invalid Unicode text.") from exc
+        return schema
     except SchemaError as exc:
         raise APIError(422, "SCHEMA_ERROR", str(exc)[:1000]) from exc
     except RecursionError as exc:

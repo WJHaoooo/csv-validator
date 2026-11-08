@@ -38,7 +38,7 @@ def resources(tmp_path, monkeypatch):
 
 @pytest.fixture
 def client(resources):
-    with TestClient(web.app) as client:
+    with TestClient(web.app, base_url="http://localhost") as client:
         yield client
 
 
@@ -149,7 +149,7 @@ def test_request_body_limit_cleans_partial_spool_without_content_length(resource
         "type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1",
         "method": "POST", "scheme": "http", "path": "/api/csv/inspect",
         "raw_path": b"/api/csv/inspect", "query_string": b"",
-        "headers": [(b"content-type", b"multipart/form-data; boundary=boundary")],
+        "headers": [(b"host", b"localhost"), (b"content-type", b"multipart/form-data; boundary=boundary")],
         "client": ("test", 1234), "server": ("test", 80), "root_path": "",
     }
 

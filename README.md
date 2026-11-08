@@ -355,6 +355,9 @@ line 是 record 起始實體行數。原始值最多回傳 256 字元，截斷�
 | 422 | CSV_ROW_ERROR | 欄位數、必填儲存格或型別錯誤 |
 | 422 | INVALID_UTF8 / INVALID_CSV / INVALID_REQUEST | 編碼、Inspect 格式或請求錯誤 |
 | 500 | JSON_WRITE_ERROR / INTERNAL_ERROR | 安全的序列化或內部失敗訊息 |
+| 400 / 403 | INVALID_HOST / ORIGIN_NOT_ALLOWED | 主機或跨來源請求被拒絕 |
+| 408 | UPLOAD_TIMEOUT | 上傳接收期限已到 |
+| 503 | SERVER_BUSY | 活躍 API 已達上限；Retry-After: 1 |
 
 只有 HTTP 200 的 Convert 回應才是可下載結果；失敗不包含 Content-Disposition。
 預期錯誤只回報第一個，不跳過錯誤列、不收集其他錯誤。
@@ -373,8 +376,9 @@ line 是 record 起始實體行數。原始值最多回傳 256 字元，截斷�
 - 不使用 NaN／Infinity；重用 CLI 的 ensure_ascii=False、allow_nan=False、indent=2。
 - 靜態資源加入 W2 版本識別，避免舊快取模組與新頁面不一致。
 
-這些是單請求上限，不是完整公開部署防護。W3 仍需入口／反向代理限制、速率與並行限制、
-逾時、程序記憶體／暫存磁碟配額、HTTPS／Host、監控與中斷清理政策。
+W3-A 已增加每 worker 活躍 API 上限、合作式上傳接收期限、Host／Origin 檢查與安全標頭。
+這些不是完整公開部署防護。入口速率／連線限制、程序硬性 CPU／記憶體／執行期限、
+暫存磁碟配額、HTTPS／代理設定、監控與中斷清理政策仍待 W3-B 驗收。
 大欄位／大量 Schema 欄位仍可能增加 DOM 或記憶體負擔；下載和預覽也保留有上限的瀏覽器記憶體副本。
 沒有 Docker、登入、資料庫或公開部署。
 
@@ -403,7 +407,7 @@ W2 驗收（2026-11-08，Windows / Python 3.14.8 / pytest 9.2.0）：
 - 390px 規則設定頁無整頁水平溢出，維持 W1 視覺。
 - 真實 HTTP Convert 成功結果與 examples/expected.json 位元組一致；失敗為 422、無下載 header，且首錯順序與 CLI 一致。
 - 實際 wheel 打包後，從暫存副本驗證頁面、新靜態模組、web_service 與大整數轉換可用。
-- W1 提交為 1178240；W2 未 Commit、未 Push、未進入 W3。
+- W1 提交為 1178240；W2 已於 W3-A 前結案提交為 724e98f，未 Push。
 
 W1 驗收（2026-11-08，Windows / Python 3.14.8 / pytest 9.2.0）：
 
@@ -466,6 +470,7 @@ csv-validator/
 │   ├── writer.py
 │   ├── web.py
 │   ├── web_service.py
+│   ├── web_security.py
 │   └── static/
 │       ├── index.html
 │       ├── style.css
@@ -482,7 +487,12 @@ csv-validator/
 │   ├── test_web.py
 │   ├── test_explorer.py
 │   ├── test_web_conversion.py
+│   ├── test_web_security.py
 │   └── frontend_rules.mjs
+├── docs/
+│   ├── SECURITY.md
+│   └── dependency-audit.json
+├── scripts/audit_dependencies.py
 ├── pyproject.toml
 ├── .gitattributes
 ├── .gitignore
@@ -492,3 +502,26 @@ csv-validator/
 本機 venv、快取、暫存與根目錄手動驗收檔不屬於公開範例；公開資料僅使用 examples/。
 
 .gitattributes 將文字檔固定為 LF，避免 Windows Git 自動換行改變範例輸出的逐 byte 驗收。
+
+## Security & Release Review — W3-A
+
+匿名公開服務目前**尚不可直接發布**。CSV／Schema 會傳至伺服器處理，請勿上傳機密或敏感資料。
+
+完整威脅模型、已完成防護、設定、依賴掃描、停用與日誌政策及 W3-B 阻塞清單：
+[Security / Deployment Checklist](docs/SECURITY.md)。
+
+- Web 應用入口仍為 csv_validator.web:app；create_app(SecuritySettings(...)) 可建立隔離測試／部署實例。
+- 預設 Host 僅 localhost／127.0.0.1／::1；正式域名須設定 CSV_VALIDATOR_ALLOWED_HOSTS。
+- 每 worker 最多 2 個活躍 POST API，超額立即 503；此限制不是全域速率限制。
+- 上傳接收預設 15 秒合作式期限，不能終止同步 CPU 轉換；硬性限制必須由平台提供。
+- CSP／同源檢查／安全標頭已加入，debug、docs／OpenAPI 預設關閉，API／HTML 不快取。
+- UTF-8 Schema 中以 JSON escape 表示的孤立 surrogate 會作為 Web 輸入錯誤拒絕，
+  避免回應序列化例外；CLI 核心規則未變。
+- W3-A 完整 pytest：**356 passed**（13.81 秒，Windows／Python 3.14.8）。
+  新增 37 項測試，包含實際 8 MiB 輸出超限、multipart header limits、上傳逾時清理、
+  Host／Origin、突發請求拒絕、合作式取消保留 worker 許可、XSS 文字與安全錯誤。
+- Editable install、pip check、CLI --help、前端 rules／lossless preview 測試通過。
+- 本機 Uvicorn 真實 HTTP 6 項檢查通過（health、精確 JSON、跨來源拒絕、multipart 錯誤、HTML、JS），驗收程序已停止。
+- [依賴掃描快照](docs/dependency-audit.json)：26 個已安裝 distributions、OSV 0 匹配（另記原建置／測試下限公告）；
+  不代表未來或其他環境沒有漏洞。可執行 python scripts/audit_dependencies.py 重新掃描。
+- W2 Commit：724e98f；W3-A 保持未提交。沒有 Push、雲端資源或公開部署。

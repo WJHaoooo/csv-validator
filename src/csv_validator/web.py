@@ -9,7 +9,8 @@ from pathlib import Path
 import tempfile
 from typing import BinaryIO
 
-from fastapi import FastAPI, Request
+from fastapi import APIRouter, FastAPI, Request
+from anyio import CancelScope, fail_after
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, Response
 from starlette.concurrency import run_in_threadpool
@@ -26,6 +27,8 @@ from csv_validator.csv_reader import (
 )
 
 
+from csv_validator.web_security import SecurityBoundary, SecuritySettings
+
 from csv_validator.web_service import (
     APIError,
     MAX_SCHEMA_BYTES,
@@ -41,12 +44,11 @@ CHUNK_BYTES = 64 * 1024
 MAX_REQUEST_BYTES = MAX_UPLOAD_BYTES + CHUNK_BYTES
 _BODY_LIMIT_MESSAGE = "Upload request exceeds the size limit."
 logger = logging.getLogger(__name__)
-app = FastAPI(title="CSV Validator Web", version="0.1.0")
+router = APIRouter()
 STATIC_DIRECTORY = Path(__file__).with_name("static")
-app.mount("/static", StaticFiles(directory=STATIC_DIRECTORY), name="static")
 
 
-@app.get("/", include_in_schema=False)
+@router.get("/", include_in_schema=False)
 async def explorer_page():
     return FileResponse(STATIC_DIRECTORY / "index.html")
 
@@ -68,29 +70,25 @@ def _error(status: int, code: str, message: str, details: dict | None = None) ->
     return JSONResponse(status_code=status, content={"error": error})
 
 
-@app.exception_handler(APIError)
 async def api_error_handler(request: Request, exc: APIError) -> JSONResponse:
     return _error(exc.status, exc.code, exc.message, exc.details)
 
 
-@app.exception_handler(HTTPException)
 async def http_error_handler(request: Request, exc: HTTPException) -> JSONResponse:
     return _error(exc.status_code, "HTTP_ERROR", HTTPStatus(exc.status_code).phrase)
 
 
-@app.exception_handler(RequestValidationError)
 async def validation_error_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
     return _error(422, "INVALID_REQUEST", "Invalid request.")
 
 
-@app.exception_handler(Exception)
 async def unexpected_error_handler(request: Request, exc: Exception) -> JSONResponse:
     # Exception text/tracebacks may contain uploaded values or temporary paths.
     logger.error("Unexpected CSV web request failure.")
     return _error(500, "INTERNAL_ERROR", "Unable to process the request.")
 
 
-@app.get("/health")
+@router.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}
 
@@ -127,7 +125,7 @@ def _inspect_file(upload: BinaryIO) -> dict[str, object]:
             raise APIError(422, "INVALID_CSV", "Unable to parse the CSV file.") from exc
 
 
-@app.post(
+@router.post(
     "/api/csv/inspect",
     openapi_extra={"requestBody": {
         "required": True,
@@ -177,16 +175,24 @@ async def _multipart_form(
     parser = _CompleteMultipartParser(
         request.headers, bounded_stream(), max_files=max_files, max_fields=0
     )
+    form = None
     try:
-        form = await parser.parse()
         try:
-            yield form
-        finally:
-            await form.close()
+            # This bounds async body reception/parsing only, not CPU work.
+            with fail_after(request.app.state.security.upload_timeout_seconds):
+                form = await parser.parse()
+        except TimeoutError as exc:
+            raise APIError(408, "UPLOAD_TIMEOUT", "Upload reception timed out.") from exc
+        yield form
     except MultiPartException as exc:
         if exc.message == _BODY_LIMIT_MESSAGE:
             raise APIError(413, "FILE_TOO_LARGE", "Upload request exceeds the size limit.") from exc
         raise APIError(400, "INVALID_UPLOAD", "Invalid multipart upload.") from exc
+    finally:
+        if form is not None:
+            # A disconnected/cancelled caller must not skip spool cleanup.
+            with CancelScope(shield=True):
+                await form.close()
 
 
 def _required_file(form, field: str) -> UploadFile:
@@ -210,7 +216,7 @@ async def _inspect_csv(request: Request) -> dict[str, object]:
     return {"status": "ok", "filename": filename, **inspection}
 
 
-@app.post("/api/schema/validate", openapi_extra={"requestBody": {
+@router.post("/api/schema/validate", openapi_extra={"requestBody": {
     "required": True, "content": {"multipart/form-data": {"schema": {
         "type": "object", "required": ["file"],
         "properties": {"file": {"type": "string", "format": "binary"}},
@@ -231,7 +237,7 @@ async def _validate_schema_upload(request: Request) -> dict:
     return {"status": "ok", "schema": schema, "column_order": list(schema["columns"])}
 
 
-@app.post("/api/csv/convert", openapi_extra={"requestBody": {
+@router.post("/api/csv/convert", openapi_extra={"requestBody": {
     "required": True, "content": {"multipart/form-data": {"schema": {
         "type": "object", "required": ["file", "schema"],
         "properties": {
@@ -268,3 +274,23 @@ async def _convert_csv_upload(request: Request) -> Response:
             "X-Content-Type-Options": "nosniff",
         },
     )
+
+
+def create_app(settings: SecuritySettings | None = None) -> FastAPI:
+    """Create an explicitly configured worker; production docs stay disabled."""
+    application = FastAPI(
+        title="CSV Validator Web", version="0.1.0", debug=False,
+        docs_url=None, redoc_url=None, openapi_url=None,
+    )
+    application.state.security = settings or SecuritySettings.from_environment()
+    application.add_exception_handler(APIError, api_error_handler)
+    application.add_exception_handler(HTTPException, http_error_handler)
+    application.add_exception_handler(RequestValidationError, validation_error_handler)
+    application.add_exception_handler(Exception, unexpected_error_handler)
+    application.include_router(router)
+    application.mount("/static", StaticFiles(directory=STATIC_DIRECTORY), name="static")
+    application.add_middleware(SecurityBoundary, settings=application.state.security)
+    return application
+
+
+app = create_app()
