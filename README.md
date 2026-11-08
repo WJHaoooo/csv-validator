@@ -17,7 +17,7 @@ A schema-driven CSV validation and transformation tool built with Python.
 - Fail Fast，錯誤包含路徑、實體行數及適用的欄位、原始值、預期型別與原因。
 - 保留 Schema key 順序與資料列順序。
 - 安全 JSON 輸出：UTF-8、Unicode、2 spaces 縮排、不覆寫既有檔案。
-- argparse CLI、pytest 單元及端到端測試，無第三方執行期依賴。
+- argparse CLI、pytest 單元及端到端測試；CLI 核心無第三方執行期依賴，Web 使用選用依賴。
 
 ## Installation — Windows PowerShell
 
@@ -28,10 +28,10 @@ Set-Location .\csv-validator
 python --version
 python -c "import sys; assert sys.version_info >= (3, 12), 'Python 3.12+ is required'"
 python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
+.\.venv\Scripts\python.exe -m pip install -e ".[web,dev]"
 ```
 
-`.[dev]` 會安裝本專案與 pytest，建置時使用 setuptools。
+`.[web,dev]` 會安裝本專案、Web 選用依賴與測試工具，建置時使用 setuptools。僅需 CLI 時可用 `pip install -e .`。
 第一次安裝通常需要存取套件索引。若任一步驟失敗，先處理錯誤再繼續。
 
 以下指令直接使用 venv Python，不需啟用腳本或變更 PowerShell Execution Policy。
@@ -194,6 +194,7 @@ CLI
 | 模組 | 責任 |
 |---|---|
 | cli.py | 解析參數、協調流程、stdout／stderr 與退出碼 |
+| web.py | W0 HTTP 邊界、上傳限制、資源清理與基本格式檢查 |
 | schema.py | UTF-8 載入、JSON 解析與重複 key／結構驗證 |
 | csv_reader.py | 標準 CSV 解析、表頭規則、共用檔案生命週期 |
 | converter.py | record 欄位數、required／空值、型別轉換，回傳 list[dict] |
@@ -220,6 +221,91 @@ Windows 行為見 [Python os.rename 文件](https://docs.python.org/3/library/os
 輸出不得與 CSV／Schema 路徑相同。若清理暫存失敗會另外警告；正式發布已成功時，
 警告代表可能殘留暫存名稱，不代表正式 JSON 不完整。
 
+## Web v1 Backend Foundation（W0）
+
+W0 提供獨立 ASGI app `csv_validator.web:app`，不改動 CLI 或核心驗證規則。
+目前僅做上傳與基本檢查，不做前五筆預覽、欄位選擇、Schema 編輯或 JSON 轉換／下載 API。
+
+### 安裝與本機啟動
+
+```powershell
+Set-Location C:\Hao\csv-validator
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -e ".[web,dev]"
+.\.venv\Scripts\python.exe -m uvicorn csv_validator.web:app --host 127.0.0.1 --port 8000
+```
+
+在第二個 PowerShell 視窗執行：
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:8000/health
+curl.exe -i -F "file=@examples/valid.csv" http://127.0.0.1:8000/api/csv/inspect
+curl.exe -i -X POST http://127.0.0.1:8000/api/csv/inspect
+```
+
+也可開啟 http://127.0.0.1:8000/docs 使用內建 API 文件上傳測試，並以 Ctrl+C 停止本機伺服器。
+此啟動指令只綁定 localhost，沒有公開部署。
+`web` 是選用依賴（FastAPI、Starlette、python-multipart、Uvicorn）；`dev` 包含 pytest 與 TestClient 所需的 httpx2。
+Starlette 最低版本要求是為了確保 multipart 解析失敗時的暫存清理行為，不使用 starlette[full] 或其他不必要 extras。
+
+### API 契約
+
+| 路由 | 請求 | 成功 |
+|---|---|---|
+| GET /health | 無 body | 200，`{"status":"ok"}` |
+| POST /api/csv/inspect | multipart/form-data，單一二進位檔案欄位 `file` | 200，`{"status":"ok"}` |
+
+檔名與 Content-Type 不代表內容合法：即使名稱是 .csv，仍須實際讀取驗證；有效 CSV 也不因其他副檔名被拒絕。
+成功只代表 W0 的 UTF-8 與 CSV 基本語法檢查通過，不代表已經過 Schema 驗證。
+會解析第一筆表頭 record 及後續 record 的 CSV 語法，拒絕無表頭的空 record；
+尚未驗證表頭名稱／重複欄位、record 欄位數、required 或型別，也不回傳上傳原文或預覽。
+CLI 既有的完整驗證行為不變。
+
+所有 API 錯誤使用相同格式：
+
+```json
+{
+  "error": {
+    "code": "INVALID_CSV",
+    "message": "Unable to parse the CSV file."
+  }
+}
+```
+
+| HTTP | code | message |
+|---:|---|---|
+| 400 | MISSING_FILE | Provide one CSV file in the 'file' field. |
+| 400 | INVALID_UPLOAD | Invalid multipart upload.／對應安全的格式說明 |
+| 400 | EMPTY_FILE | CSV file is empty. |
+| 413 | FILE_TOO_LARGE | CSV file exceeds 5 MiB.／Upload request exceeds the size limit. |
+| 422 | INVALID_UTF8 | CSV file must be valid UTF-8. |
+| 422 | INVALID_CSV | Unable to parse the CSV file.／Unable to read a CSV header. |
+| 422 | INVALID_REQUEST | Invalid request. |
+| 500 | INTERNAL_ERROR | Unable to process the request. |
+
+HTTP 404 等框架錯誤也使用 error envelope（HTTP_ERROR）。
+伺服器錯誤不回傳 traceback、暫存路徑或 CSV 內容；應用層只記錄固定的通用錯誤訊息。
+
+### 上傳與資源管理
+
+- CSV 檔案上限為 **5 MiB（5,242,880 bytes）**，剛好上限可接受。
+- 接收 multipart 串流時另限制整個 body 為 **5 MiB + 64 KiB**，包含 multipart overhead，不信任 Content-Length。
+- 限制最多一個檔案、零個普通表單欄位；拒絕截斷 multipart。
+- UploadFile 由框架 spool；讀取時每次最多 64 KiB，最多讀至檔案限制加 1 byte，不使用無界 read()。
+- 以 incremental UTF-8 decoder 檢查整份檔案，支援跨 chunk 的多 byte 字元，也檢查 EOF 的不完整字元。
+- 在伺服器產生的 TemporaryDirectory 中固定使用 upload.csv，不使用用戶檔名組路徑；先關閉寫入，再重用既有 CSV Reader。
+- 解析在 threadpool 執行；正常、驗證失敗及一般處理例外都會關閉 spool 並清理檢查副本。
+- multipart 超限／截斷在 parser 尚持有資源時觸發錯誤；使用公開 on_end callback 判斷完整性，不重寫解析規則。
+- framework spool 與檢查副本可能同時占用暫存磁碟；沒有把完整檔案另複製成記憶體 bytes。
+
+### 公開部署前仍須完成
+
+W0 **不代表具備完整公開部署防護**。後續仍需反向代理／平台層 request body 限制、
+請求速率限制、並行與 threadpool 工作量限制、請求與處理逾時、程序記憶體與暫存磁碟配額、
+HTTPS／Host 設定、部署平台中斷後的暫存清理政策，以及正式錯誤監控／依賴更新流程。
+單一 ASGI body chunk 的配置大小由伺服器決定；應用層限制不能取代入口層防護。
+未新增 CORS 放行、登入、資料庫或部署設定。
+
 ## Testing
 
 ```powershell
@@ -232,7 +318,17 @@ Windows 行為見 [Python os.rename 文件](https://docs.python.org/3/library/os
 JSON 內容與型別、Unicode、null、輸出保護、並行 writer 與 I/O 故障注入。
 公開 examples 也透過真正 CLI 自動驗收，合法輸出須逐 byte 符合 expected.json。
 
-2026-11-07，在獨立暫存專案、全新 venv 與 Windows PowerShell 中實際重跑上方所有 PowerShell 區塊：
+W0 驗收（2026-11-08，Windows / Python 3.14.8 / pytest 9.2.0）：
+
+- 完整 pytest：**267 passed**（6.74 秒），包含既有 236 項與新增 Web 31 項。
+- API 測試使用 FastAPI TestClient，未關閉 server exception 傳遞；測試預期錯誤、精確 5 MiB／超限、串流截斷、UTF-8 跨塊、內部失敗、日誌與資源清理。
+- 實際啟動 Uvicorn：health 200、Windows curl.exe 上傳 200、缺檔 400，OpenAPI 上傳欄位正確；驗收伺服器已停止。
+- CLI --help、既有端到端測試、pip check 均通過；CLI 單獨匯入不載入 FastAPI。
+- 套件實測版本：FastAPI 0.162.2、Starlette 1.10.0、python-multipart 0.0.33、Uvicorn 0.54.0、httpx2 2.16.0。
+- httpx2 為目前 Starlette TestClient 的建議後端，見 [官方文件](https://starlette.dev/testclient/)。
+- W0 變更保持未提交，沒有公開部署，也沒有進入 W1。
+
+CLI MVP 歷史驗收（2026-11-07，Web 開發前）：在獨立暫存專案與全新 venv 中實際重跑當時 CLI 文件的 PowerShell 步驟：
 
 - Python 3.14.8 / pytest 9.2.0：完整測試 **236 passed**（5.47 秒）。
 - 公開範例：**2 passed**；正常輸出逐 byte 符合 expected.json。
@@ -253,7 +349,7 @@ JSON 內容與型別、Unicode、null、輸出保護、並行 writer 與 I/O 故
 - 中斷或清理權限問題可能殘留暫存檔；不保證斷電後目錄 metadata 持久性。
 - 非 Windows 發布依賴 hard link，目前未在非 Windows 平台實測。
 - Python 3.12 及其他版本尚未實測。
-- 尚無 Web UI、GUI、API、資料庫、Docker 或雲端部署。
+- 尚無 Web UI、GUI、JSON 轉換／下載 API、資料庫、Docker 或公開部署。
 
 ## Project Layout
 
@@ -270,7 +366,8 @@ csv-validator/
 │   ├── schema.py
 │   ├── csv_reader.py
 │   ├── converter.py
-│   └── writer.py
+│   ├── writer.py
+│   └── web.py
 ├── tests/
 │   ├── test_project_setup.py
 │   ├── test_schema.py
@@ -278,7 +375,8 @@ csv-validator/
 │   ├── test_converter.py
 │   ├── test_writer.py
 │   ├── test_cli.py
-│   └── test_examples.py
+│   ├── test_examples.py
+│   └── test_web.py
 ├── pyproject.toml
 ├── .gitattributes
 ├── .gitignore
