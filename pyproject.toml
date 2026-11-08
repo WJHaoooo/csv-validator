@@ -25,3 +25,6 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "--import-mode=importlib"
+
+[tool.setuptools.package-data]
+csv_validator = ["static/*.html", "static/*.css", "static/*.js"]

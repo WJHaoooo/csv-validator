@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>CSV Explorer · CSV Validator</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script type="module" src="/static/app.js"></script>
+</head>
+<body>
+  <header class="site-header">
+    <div class="brand"><span class="brand-mark" aria-hidden="true">C<span>↗</span></span><span>CSV Validator<small>DATA IMPORT TOOLKIT</small></span></div>
+    <span class="stage-badge">WEB v1 <span>／</span> W1</span>
+  </header>
+  <main>
+    <nav class="steps" aria-label="操作階段"><span aria-current="step"><b>01</b> 探索 CSV</span><span class="step-line"></span><span><b>02</b> 設定規則 <small>尚未開發</small></span></nav>
+    <section class="intro"><p class="eyebrow">CSV EXPLORER</p><h1>先看清資料，再選擇欄位。</h1><p>上傳 CSV、檢視前 5 筆原始資料，選擇下一步要保留的欄位。<br class="desktop-break">這是資料探索階段，尚未進行 Schema 驗證或型別轉換。</p></section>
+
+    <section id="dropzone" class="upload-card" aria-label="CSV 上傳區域">
+      <div class="upload-icon" aria-hidden="true">↑</div>
+      <div class="upload-copy"><h2>將 CSV 拖曳到這裡，或選擇檔案</h2><p>UTF-8 編碼 · 逗號分隔 · 最大 5 MiB</p></div>
+      <label class="button button-outline upload-button" for="csv-file">選擇 CSV 檔案<input id="csv-file" type="file" accept=".csv,text/csv"></label>
+    </section>
+    <p id="upload-status" class="upload-status" role="status" aria-live="polite"></p>
+    <div id="error" class="error-box" role="alert" hidden></div>
+
+    <section id="empty-state" class="empty-state"><span aria-hidden="true">▦</span><h2>從一份 CSV 開始</h2><p>檔案讀取後，表頭、資料預覽與欄位選擇會顯示在這裡。</p></section>
+
+    <section id="workspace" hidden aria-label="CSV 探索結果">
+      <div class="file-summary"><div><span class="file-tag">CSV</span><strong id="filename"></strong><span id="file-size" class="muted"></span></div><span class="summary-label">僅預覽，未完成資料驗證</span></div>
+      <div class="workspace-grid">
+        <aside class="panel columns-panel">
+          <div class="panel-heading"><div><p class="eyebrow">COLUMNS</p><h2>選擇欄位 <span id="column-count" class="count-badge"></span></h2></div></div>
+          <label class="search-label" for="column-search">搜尋欄位名稱</label>
+          <input id="column-search" class="search-input" type="search" placeholder="輸入欄位名稱…" autocomplete="off">
+          <div class="selection-actions"><button id="select-all" type="button">全選</button><span>／</span><button id="clear-all" type="button">取消全選</button><span id="visible-count" class="muted"></span></div>
+          <div id="column-list" class="column-list" aria-label="欄位勾選清單"></div>
+          <p id="no-results" class="no-results" hidden>找不到符合的欄位。</p>
+          <p class="panel-note">搜尋只過濾顯示，不改變勾選。<br>全選與取消全選套用至所有欄位。</p>
+        </aside>
+        <section class="panel preview-panel">
+          <div class="panel-heading"><div><p class="eyebrow">RAW DATA</p><h2>資料預覽</h2></div><span id="preview-count" class="preview-badge"></span></div>
+          <p class="preview-note">保留原始字串、空白及欄位順序；預覽顯示所有原始欄位。</p>
+          <div class="table-scroll" tabindex="0" role="region" aria-label="CSV 原始資料預覽"><table id="preview-table"><thead></thead><tbody></tbody></table></div>
+          <p id="no-rows" class="no-rows" hidden>這份 CSV 只有表頭，沒有資料記錄。仍可選擇欄位。</p>
+          <div class="preview-footer"><span class="status-dot"></span>最多顯示前 5 筆，不代表全檔驗證成功。</div>
+        </section>
+      </div>
+      <div class="continue-bar"><div><strong id="selected-count" aria-live="polite"></strong><p id="selection-hint"></p></div><button id="next-step" class="button button-primary" type="button" disabled>下一步：設定規則 <span aria-hidden="true">→</span></button></div>
+    </section>
+    <section id="next-placeholder" class="placeholder panel" hidden aria-labelledby="next-title">
+      <p class="eyebrow">NEXT / W2</p><h2 id="next-title">規則設定尚未開發</h2>
+      <p id="handoff-summary"></p><p>CSV File、原始表頭、已選欄位與預覽只保存在目前頁面記憶體。尚未完成 Schema 驗證，也未產生 JSON。</p>
+      <button id="back-to-explorer" class="button button-outline" type="button">← 返回欄位選擇</button>
+    </section>
+  </main>
+  <footer class="site-footer"><span>CSV Validator <span class="footer-dot">·</span> Schema-driven data import</span><span>重新整理頁面即清除探索狀態</span></footer>
+</body>
+</html>

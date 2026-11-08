@@ -1,25 +1,28 @@
-"""W0 HTTP boundary: bounded upload inspection, separate from CLI/core rules."""
+"""Web explorer: bounded upload inspection and raw CSV preview."""
 
 import codecs
 import csv
 from http import HTTPStatus
 import logging
+from itertools import islice
 from pathlib import Path
 import tempfile
 from typing import BinaryIO
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import UploadFile
 from starlette.exceptions import HTTPException
 from starlette.formparsers import MultiPartException, MultiPartParser
+from starlette.staticfiles import StaticFiles
 
 from csv_validator.csv_reader import (
     CSVHeaderError,
     open_csv_reader,
     read_header_record,
+    validate_header_names,
 )
 
 
@@ -30,6 +33,13 @@ MAX_REQUEST_BYTES = MAX_UPLOAD_BYTES + CHUNK_BYTES
 _BODY_LIMIT_MESSAGE = "Upload request exceeds the size limit."
 logger = logging.getLogger(__name__)
 app = FastAPI(title="CSV Validator Web", version="0.1.0")
+STATIC_DIRECTORY = Path(__file__).with_name("static")
+app.mount("/static", StaticFiles(directory=STATIC_DIRECTORY), name="static")
+
+
+@app.get("/", include_in_schema=False)
+async def explorer_page():
+    return FileResponse(STATIC_DIRECTORY / "index.html")
 
 
 class APIError(Exception):
@@ -86,7 +96,7 @@ async def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-def _inspect_file(upload: BinaryIO) -> None:
+def _inspect_file(upload: BinaryIO) -> dict[str, object]:
     """Copy bounded chunks to a server-owned path and inspect without a schema."""
     with tempfile.TemporaryDirectory(prefix="csv-validator-upload-") as directory:
         path = Path(directory) / "upload.csv"
@@ -118,9 +128,18 @@ def _inspect_file(upload: BinaryIO) -> None:
                 headers = read_header_record(reader, path)
                 if not headers:
                     raise APIError(422, "INVALID_CSV", "Unable to read a CSV header.")
-                # Syntax inspection only: no row preview, schema, width or types.
-                for _ in reader:
-                    pass
+                try:
+                    validate_header_names(headers)
+                except CSVHeaderError as exc:
+                    raise APIError(422, "INVALID_CSV", str(exc)) from exc
+                # UTF-8 was checked for the entire file above. Parse no more
+                # than five data records; later CSV syntax is not certified.
+                preview = list(islice(reader, 5))
+                return {
+                    "columns": headers,
+                    "preview": preview,
+                    "preview_count": len(preview),
+                }
         except CSVHeaderError as exc:
             if isinstance(exc.__cause__, OSError):
                 # Storage failures are server errors, not bad user CSV.
@@ -140,7 +159,7 @@ def _inspect_file(upload: BinaryIO) -> None:
         }}},
     }},
 )
-async def inspect_csv(request: Request) -> dict[str, str]:
+async def inspect_csv(request: Request) -> dict[str, object]:
     try:
         return await _inspect_csv(request)
     except APIError:
@@ -153,7 +172,7 @@ async def inspect_csv(request: Request) -> dict[str, str]:
         raise APIError(500, "INTERNAL_ERROR", "Unable to process the request.") from None
 
 
-async def _inspect_csv(request: Request) -> dict[str, str]:
+async def _inspect_csv(request: Request) -> dict[str, object]:
     media_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
     if not media_type:
         raise APIError(400, "MISSING_FILE", "Provide one CSV file in the 'file' field.")
@@ -186,11 +205,12 @@ async def _inspect_csv(request: Request) -> dict[str, str]:
                 raise APIError(400, "MISSING_FILE", "Provide one CSV file in the 'file' field.")
             if not isinstance(file, UploadFile) or len(form) != 1:
                 raise APIError(400, "INVALID_UPLOAD", "Provide exactly one uploaded CSV file.")
-            await run_in_threadpool(_inspect_file, file.file)
+            inspection = await run_in_threadpool(_inspect_file, file.file)
+            filename = Path((file.filename or "upload.csv").replace("\\", "/")).name or "upload.csv"
         finally:
             await form.close()
     except MultiPartException as exc:
         if exc.message == _BODY_LIMIT_MESSAGE:
             raise APIError(413, "FILE_TOO_LARGE", "Upload request exceeds the size limit.") from exc
         raise APIError(400, "INVALID_UPLOAD", "Invalid multipart upload.") from exc
-    return {"status": "ok"}
+    return {"status": "ok", "filename": filename, **inspection}

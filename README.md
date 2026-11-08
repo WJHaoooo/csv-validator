@@ -194,9 +194,9 @@ CLI
 | 模組 | 責任 |
 |---|---|
 | cli.py | 解析參數、協調流程、stdout／stderr 與退出碼 |
-| web.py | W0 HTTP 邊界、上傳限制、資源清理與基本格式檢查 |
+| web.py | Web 頁面、Inspect API、上傳限制、預覽與資源清理 |
 | schema.py | UTF-8 載入、JSON 解析與重複 key／結構驗證 |
-| csv_reader.py | 標準 CSV 解析、表頭規則、共用檔案生命週期 |
+| csv_reader.py | 標準 CSV 解析、共用表頭名稱規則、Schema 必要欄位與檔案生命週期 |
 | converter.py | record 欄位數、required／空值、型別轉換，回傳 list[dict] |
 | writer.py | 路徑檢查、標準 JSON 序列化、暫存及不覆寫發布 |
 
@@ -221,90 +221,111 @@ Windows 行為見 [Python os.rename 文件](https://docs.python.org/3/library/os
 輸出不得與 CSV／Schema 路徑相同。若清理暫存失敗會另外警告；正式發布已成功時，
 警告代表可能殘留暫存名稱，不代表正式 JSON 不完整。
 
-## Web v1 Backend Foundation（W0）
+## Web v1 CSV Explorer（W1）
 
-W0 提供獨立 ASGI app `csv_validator.web:app`，不改動 CLI 或核心驗證規則。
-目前僅做上傳與基本檢查，不做前五筆預覽、欄位選擇、Schema 編輯或 JSON 轉換／下載 API。
+獨立 ASGI app 為 `csv_validator.web:app`。首頁提供原生 HTML/CSS/JavaScript，
+不使用 React、CDN、伺服器 Session 或資料庫。CLI 的完整驗證行為保持不變。
 
-### 安裝與本機啟動
+### 本機啟動與使用
 
 ```powershell
 Set-Location C:\Hao\csv-validator
-python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e ".[web,dev]"
-.\.venv\Scripts\python.exe -m uvicorn csv_validator.web:app --host 127.0.0.1 --port 8000
+.\.venv\Scripts\python.exe -m uvicorn csv_validator.web:app --host 127.0.0.1 --port 8001
 ```
 
-在第二個 PowerShell 視窗執行：
+開啟 http://127.0.0.1:8001/，選擇或拖入一個 CSV：
+
+1. 顯示檔名、欄位數量與最多前五筆資料記錄。
+2. 欄位預設全部勾選，可全選、取消全選及搜尋；搜尋不改變勾選狀態。
+3. 至少選取一個欄位才能繼續。
+4. 下一步只顯示「W2 尚未開發」佔位畫面，不代表已完成資料驗證。
+5. 重新上傳會立即清除舊預覽、搜尋與選擇；舊請求會取消，較慢的舊回應不覆蓋新檔案。
+
+File、原始表頭順序、已選欄位及預覽保存在頁面記憶體，
+由前端 `getExplorerState()` 提供 W2 handoff。已選欄位仍依原始順序輸出，沒有排序或轉型。
+重新整理頁面會清除狀態，不使用 localStorage。
+預覽中的「空字串」只是顯示提示，記憶體與 API 仍保留原始 `""`。
+多行儲存格保留換行，寬表格在自身區塊內捲動。
+
+若埠被占用，選擇另一個未使用的埠；本機啟動僅綁定 localhost，並以 Ctrl+C 停止前景伺服器。
+`web` 為 FastAPI、Starlette、python-multipart、Uvicorn 選用依賴；
+`dev` 包含 pytest 與 TestClient 所需的 httpx2。
+
+### API
 
 ```powershell
-Invoke-RestMethod http://127.0.0.1:8000/health
-curl.exe -i -F "file=@examples/valid.csv" http://127.0.0.1:8000/api/csv/inspect
-curl.exe -i -X POST http://127.0.0.1:8000/api/csv/inspect
+Invoke-RestMethod http://127.0.0.1:8001/health
+curl.exe -i -F "file=@examples/valid.csv" http://127.0.0.1:8001/api/csv/inspect
 ```
 
-也可開啟 http://127.0.0.1:8000/docs 使用內建 API 文件上傳測試，並以 Ctrl+C 停止本機伺服器。
-此啟動指令只綁定 localhost，沒有公開部署。
-`web` 是選用依賴（FastAPI、Starlette、python-multipart、Uvicorn）；`dev` 包含 pytest 與 TestClient 所需的 httpx2。
-Starlette 最低版本要求是為了確保 multipart 解析失敗時的暫存清理行為，不使用 starlette[full] 或其他不必要 extras。
+GET /health 保持 200、`{"status":"ok"}`。
+POST /api/csv/inspect 接收 multipart/form-data 的單一 `file` 欄位，例如：
 
-### API 契約
+```json
+{
+  "status": "ok",
+  "filename": "customers.csv",
+  "columns": ["id", "name", "phone"],
+  "preview": [
+    ["001", "Example Alpha", "0000000001"],
+    ["002", "Example Beta", ""]
+  ],
+  "preview_count": 2
+}
+```
 
-| 路由 | 請求 | 成功 |
-|---|---|---|
-| GET /health | 無 body | 200，`{"status":"ok"}` |
-| POST /api/csv/inspect | multipart/form-data，單一二進位檔案欄位 `file` | 200，`{"status":"ok"}` |
+相容性與驗證範圍：
 
-檔名與 Content-Type 不代表內容合法：即使名稱是 .csv，仍須實際讀取驗證；有效 CSV 也不因其他副檔名被拒絕。
-成功只代表 W0 的 UTF-8 與 CSV 基本語法檢查通過，不代表已經過 Schema 驗證。
-會解析第一筆表頭 record 及後續 record 的 CSV 語法，拒絕無表頭的空 record；
-尚未驗證表頭名稱／重複欄位、record 欄位數、required 或型別，也不回傳上傳原文或預覽。
-CLI 既有的完整驗證行為不變。
+- 保留 W0 的 `status: "ok"`，新增 filename、columns、preview、preview_count。
+- 檔名只用於顯示，移除路徑部分，不決定伺服器暫存路徑。
+- 保留原始欄位名稱、順序與儲存格字串；表頭空白或重複會拒絕，
+  重用 CSV Reader 的 `validate_header_names()`，CLI 也使用同一檢查。
+- 表頭後沒有資料時回傳空 preview；最多解析五筆 record，不為預覽解析第六筆。
+- 整份檔案仍須讀取以檢查大小及 UTF-8；**不再像 W0 一樣掃描全部 CSV record 語法**。
+  第六筆之後的 CSV 語法不在 W1 檢查範圍，此為必要的檢查範圍調整。
+- 成功不代表完整 CSV／Schema 驗證，不檢查 record 欄位數、required 或資料型別。
+- 不提供 Schema Editor、JSON 轉換 API、下載、登入或公開部署。
+- 使用 textContent 與 DOM 節點渲染檔名、欄位與儲存格，不把 CSV 字串當成 HTML。
 
-所有 API 錯誤使用相同格式：
+錯誤契約延續 W0：
 
 ```json
 {
   "error": {
     "code": "INVALID_CSV",
-    "message": "Unable to parse the CSV file."
+    "message": "duplicate CSV header: 'id'"
   }
 }
 ```
 
-| HTTP | code | message |
+| HTTP | code | 意義 |
 |---:|---|---|
-| 400 | MISSING_FILE | Provide one CSV file in the 'file' field. |
-| 400 | INVALID_UPLOAD | Invalid multipart upload.／對應安全的格式說明 |
-| 400 | EMPTY_FILE | CSV file is empty. |
-| 413 | FILE_TOO_LARGE | CSV file exceeds 5 MiB.／Upload request exceeds the size limit. |
-| 422 | INVALID_UTF8 | CSV file must be valid UTF-8. |
-| 422 | INVALID_CSV | Unable to parse the CSV file.／Unable to read a CSV header. |
-| 422 | INVALID_REQUEST | Invalid request. |
-| 500 | INTERNAL_ERROR | Unable to process the request. |
+| 400 | MISSING_FILE / INVALID_UPLOAD / EMPTY_FILE | 缺檔、multipart 不合法或空檔 |
+| 413 | FILE_TOO_LARGE | 檔案或 multipart body 超限 |
+| 422 | INVALID_UTF8 / INVALID_CSV / INVALID_REQUEST | 編碼、預覽範圍 CSV 語法或表頭錯誤 |
+| 500 | INTERNAL_ERROR | 固定安全訊息，不回傳 traceback 或暫存路徑 |
 
 HTTP 404 等框架錯誤也使用 error envelope（HTTP_ERROR）。
-伺服器錯誤不回傳 traceback、暫存路徑或 CSV 內容；應用層只記錄固定的通用錯誤訊息。
+CSV 原文不寫入應用日誌。
 
-### 上傳與資源管理
+### 上傳與暫存安全
 
-- CSV 檔案上限為 **5 MiB（5,242,880 bytes）**，剛好上限可接受。
-- 接收 multipart 串流時另限制整個 body 為 **5 MiB + 64 KiB**，包含 multipart overhead，不信任 Content-Length。
-- 限制最多一個檔案、零個普通表單欄位；拒絕截斷 multipart。
-- UploadFile 由框架 spool；讀取時每次最多 64 KiB，最多讀至檔案限制加 1 byte，不使用無界 read()。
-- 以 incremental UTF-8 decoder 檢查整份檔案，支援跨 chunk 的多 byte 字元，也檢查 EOF 的不完整字元。
-- 在伺服器產生的 TemporaryDirectory 中固定使用 upload.csv，不使用用戶檔名組路徑；先關閉寫入，再重用既有 CSV Reader。
-- 解析在 threadpool 執行；正常、驗證失敗及一般處理例外都會關閉 spool 並清理檢查副本。
-- multipart 超限／截斷在 parser 尚持有資源時觸發錯誤；使用公開 on_end callback 判斷完整性，不重寫解析規則。
-- framework spool 與檢查副本可能同時占用暫存磁碟；沒有把完整檔案另複製成記憶體 bytes。
+- 檔案上限 5 MiB（5,242,880 bytes）；含 multipart overhead 的 body 上限為 5 MiB + 64 KiB。
+- 以實際串流計數，不信任 Content-Length；最多一個檔案、零個普通表單欄位。
+- 每次最多讀取 64 KiB，整份 UTF-8 用 incremental decoder 驗證。
+- 安全 TemporaryDirectory 內固定使用 upload.csv，關閉寫入後才交給既有 CSV Reader。
+- framework spool 與檢查副本可能同時占用暫存磁碟，不在記憶體建立完整檔案副本。
+- 成功、格式錯誤與一般例外均關閉 spool 並清理副本；截斷 multipart 在 parser 仍持有資源時被拒絕。
+- threadpool 中執行檢查，不向使用者暴露內部例外文字。
+- 靜態 HTML/CSS/JS 透過 package-data 納入套件，不依賴工作目錄。
 
-### 公開部署前仍須完成
+### 部署限制
 
-W0 **不代表具備完整公開部署防護**。後續仍需反向代理／平台層 request body 限制、
-請求速率限制、並行與 threadpool 工作量限制、請求與處理逾時、程序記憶體與暫存磁碟配額、
-HTTPS／Host 設定、部署平台中斷後的暫存清理政策，以及正式錯誤監控／依賴更新流程。
-單一 ASGI body chunk 的配置大小由伺服器決定；應用層限制不能取代入口層防護。
-未新增 CORS 放行、登入、資料庫或部署設定。
+W1 不代表已具備公開部署防護。仍須平台／反向代理的 body 限制、速率限制、
+並行／threadpool 與處理逾時限制、記憶體及暫存磁碟配額、HTTPS／Host 設定，
+以及中斷清理與監控政策。大量欄位或很長的預覽字串也可能增加瀏覽器 DOM 負擔。
+沒有新增 CORS 放行、資料庫或部署設定。
 
 ## Testing
 
@@ -317,6 +338,16 @@ HTTPS／Host 設定、部署平台中斷後的暫存清理政策，以及正式�
 測試包含 Schema、CSV 表頭、逐列轉型、實體行數、Fail Fast、CLI subprocess、
 JSON 內容與型別、Unicode、null、輸出保護、並行 writer 與 I/O 故障注入。
 公開 examples 也透過真正 CLI 自動驗收，合法輸出須逐 byte 符合 expected.json。
+
+W1 驗收（2026-11-08，Windows / Python 3.14.8 / pytest 9.2.0）：
+
+- 完整 pytest：**278 passed**（10.40 秒）；新增 Explorer 測試可獨立執行，11 passed。
+- JavaScript ES module 語法檢查、CLI --help、pip check 均通過。
+- 真正瀏覽器驗收：預設全選、取消全選停用下一步、搜尋不改勾選、重傳重設、
+  重複表頭錯誤、錯誤後重新上傳恢復、最多五筆預覽、多行／逗號／空字串及 W2 佔位。
+- 390px 手機版檢查無整頁水平溢出；預覽表格在自身區塊內水平捲動。
+- 實際 wheel 打包後，從暫存解壓副本驗證首頁、CSS、JS 與 API 可用。
+- W0 提交為 7cd27bc；W1 保持未提交、未 Push。未新增外部依賴。
 
 W0 驗收（2026-11-08，Windows / Python 3.14.8 / pytest 9.2.0）：
 
@@ -349,7 +380,7 @@ CLI MVP 歷史驗收（2026-11-07，Web 開發前）：在獨立暫存專案與�
 - 中斷或清理權限問題可能殘留暫存檔；不保證斷電後目錄 metadata 持久性。
 - 非 Windows 發布依賴 hard link，目前未在非 Windows 平台實測。
 - Python 3.12 及其他版本尚未實測。
-- 尚無 Web UI、GUI、JSON 轉換／下載 API、資料庫、Docker 或公開部署。
+- Web 僅提供 W1 Explorer；尚無 Schema Editor、JSON 轉換／下載 API、資料庫、Docker 或公開部署。
 
 ## Project Layout
 
@@ -367,7 +398,11 @@ csv-validator/
 │   ├── csv_reader.py
 │   ├── converter.py
 │   ├── writer.py
-│   └── web.py
+│   ├── web.py
+│   └── static/
+│       ├── index.html
+│       ├── style.css
+│       └── app.js
 ├── tests/
 │   ├── test_project_setup.py
 │   ├── test_schema.py
@@ -376,7 +411,8 @@ csv-validator/
 │   ├── test_writer.py
 │   ├── test_cli.py
 │   ├── test_examples.py
-│   └── test_web.py
+│   ├── test_web.py
+│   └── test_explorer.py
 ├── pyproject.toml
 ├── .gitattributes
 ├── .gitignore

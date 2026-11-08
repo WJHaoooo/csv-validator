@@ -59,9 +59,8 @@ def read_csv_header(path: str | PathLike[str]) -> list[str]:
         return read_header_record(reader, path)
 
 
-def validate_headers(headers: list[str], schema: dict) -> list[str]:
-    """Check header names and required columns, returning the unchanged list."""
-    schema = validate_schema(schema)
+def validate_header_names(headers: list[str]) -> list[str]:
+    """Reject empty, blank, or duplicate names without requiring a schema."""
     if not headers:
         raise CSVHeaderError("blank CSV header record; no column names")
 
@@ -73,6 +72,14 @@ def validate_headers(headers: list[str], schema: dict) -> list[str]:
             raise CSVHeaderError(f"duplicate CSV header: {name!r}")
         seen.add(name)
 
+    return headers
+
+
+def validate_headers(headers: list[str], schema: dict) -> list[str]:
+    """Check header names and required columns, returning the unchanged list."""
+    schema = validate_schema(schema)
+    validate_header_names(headers)
+    seen = set(headers)
     for name, config in schema["columns"].items():
         if config["required"] and name not in seen:
             raise CSVHeaderError(f"missing required column: {name!r}")

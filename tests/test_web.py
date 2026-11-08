@@ -64,7 +64,7 @@ def test_health(client):
 def test_valid_csv_upload(client, content, resources):
     response = client.post("/api/csv/inspect", files={"file": ("input.csv", content, "text/csv")})
     assert response.status_code == 200
-    assert response.json() == {"status": "ok"}
+    assert response.json()["status"] == "ok"
     directories, spools = resources
     assert len(directories) == len(spools) == 1
     assert not directories[0].exists() and spools[0].closed
@@ -127,7 +127,7 @@ def test_exactly_five_mib_is_accepted(client):
     response = client.post("/api/csv/inspect", files={
         "file": ("input.csv", csv_bytes_of_size(web.MAX_UPLOAD_BYTES)),
     })
-    assert response.status_code == 200 and response.json() == {"status": "ok"}
+    assert response.status_code == 200 and response.json()["status"] == "ok"
 
 
 def test_one_byte_over_five_mib_is_rejected(client):
@@ -185,7 +185,7 @@ def test_reads_are_bounded_and_client_filename_never_selects_path(client, monkey
             return self.file.read(size)
 
     def inspect(file):
-        original(BoundedFile(file))
+        return original(BoundedFile(file))
 
     def reader(path):
         inspected_paths.append(path)
@@ -237,10 +237,11 @@ def test_unexpected_failure_is_sanitized_and_all_temp_files_close(client, monkey
     assert secret not in caplog.text and "PRIVATE_CSV_CONTENT" not in caplog.text
 
 
-def test_w0_does_not_perform_schema_conversion_or_return_preview(client):
+def test_inspect_does_not_perform_schema_conversion(client):
     response = client.post("/api/csv/inspect", files={"file": ("input.csv", b"id,name\nnot-an-int\n")})
     assert response.status_code == 200
-    assert response.json() == {"status": "ok"}
+    assert response.json()["status"] == "ok"
+    assert response.json()["preview"] == [["not-an-int"]]
 
 
 def test_http_error_uses_same_envelope(client):
