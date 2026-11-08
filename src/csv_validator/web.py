@@ -1,6 +1,6 @@
 """Web explorer: bounded upload inspection and raw CSV preview."""
 
-import codecs
+from contextlib import asynccontextmanager
 import csv
 from http import HTTPStatus
 import logging
@@ -11,7 +11,7 @@ from typing import BinaryIO
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import UploadFile
 from starlette.exceptions import HTTPException
@@ -23,6 +23,15 @@ from csv_validator.csv_reader import (
     open_csv_reader,
     read_header_record,
     validate_header_names,
+)
+
+
+from csv_validator.web_service import (
+    APIError,
+    MAX_SCHEMA_BYTES,
+    copy_csv,
+    convert_upload,
+    read_schema,
 )
 
 
@@ -42,16 +51,6 @@ async def explorer_page():
     return FileResponse(STATIC_DIRECTORY / "index.html")
 
 
-class APIError(Exception):
-    """Expected HTTP error with a safe, stable public message."""
-
-    def __init__(self, status: int, code: str, message: str):
-        self.status = status
-        self.code = code
-        self.message = message
-        super().__init__(message)
-
-
 class _CompleteMultipartParser(MultiPartParser):
     """Track the public completion callback without replacing multipart parsing."""
 
@@ -62,16 +61,16 @@ class _CompleteMultipartParser(MultiPartParser):
         super().on_end()
 
 
-def _error(status: int, code: str, message: str) -> JSONResponse:
-    return JSONResponse(
-        status_code=status,
-        content={"error": {"code": code, "message": message}},
-    )
+def _error(status: int, code: str, message: str, details: dict | None = None) -> JSONResponse:
+    error = {"code": code, "message": message}
+    if details is not None:
+        error["details"] = details
+    return JSONResponse(status_code=status, content={"error": error})
 
 
 @app.exception_handler(APIError)
 async def api_error_handler(request: Request, exc: APIError) -> JSONResponse:
-    return _error(exc.status, exc.code, exc.message)
+    return _error(exc.status, exc.code, exc.message, exc.details)
 
 
 @app.exception_handler(HTTPException)
@@ -100,28 +99,7 @@ def _inspect_file(upload: BinaryIO) -> dict[str, object]:
     """Copy bounded chunks to a server-owned path and inspect without a schema."""
     with tempfile.TemporaryDirectory(prefix="csv-validator-upload-") as directory:
         path = Path(directory) / "upload.csv"
-        decoder = codecs.getincrementaldecoder("utf-8")(errors="strict")
-        size = 0
-        with path.open("wb") as destination:
-            while True:
-                # Read at most one byte over the CSV limit, never read(-1).
-                chunk = upload.read(min(CHUNK_BYTES, MAX_UPLOAD_BYTES + 1 - size))
-                if not chunk:
-                    break
-                size += len(chunk)
-                if size > MAX_UPLOAD_BYTES:
-                    raise APIError(413, "FILE_TOO_LARGE", "CSV file exceeds 5 MiB.")
-                try:
-                    decoder.decode(chunk, final=False)
-                except UnicodeDecodeError as exc:
-                    raise APIError(422, "INVALID_UTF8", "CSV file must be valid UTF-8.") from exc
-                destination.write(chunk)
-            try:
-                decoder.decode(b"", final=True)
-            except UnicodeDecodeError as exc:
-                raise APIError(422, "INVALID_UTF8", "CSV file must be valid UTF-8.") from exc
-        if size == 0:
-            raise APIError(400, "EMPTY_FILE", "CSV file is empty.")
+        copy_csv(upload, path, limit=MAX_UPLOAD_BYTES, chunk_bytes=CHUNK_BYTES)
 
         try:
             with open_csv_reader(path) as reader:
@@ -160,19 +138,23 @@ def _inspect_file(upload: BinaryIO) -> dict[str, object]:
     }},
 )
 async def inspect_csv(request: Request) -> dict[str, object]:
+    return await _safe_request(_inspect_csv(request))
+
+
+async def _safe_request(operation):
     try:
-        return await _inspect_csv(request)
+        return await operation
     except APIError:
         raise
     except Exception:
-        # Handle at the upload boundary: an Exception handler alone is not
-        # enough, because ServerErrorMiddleware re-raises to the ASGI server,
-        # which may log exception text containing uploaded values.
-        logger.error("Unexpected CSV inspection failure.")
+        logger.error("Unexpected CSV web request failure.")
         raise APIError(500, "INTERNAL_ERROR", "Unable to process the request.") from None
 
 
-async def _inspect_csv(request: Request) -> dict[str, object]:
+@asynccontextmanager
+async def _multipart_form(
+    request: Request, *, max_files: int = 1, max_body: int = MAX_REQUEST_BYTES
+):
     media_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
     if not media_type:
         raise APIError(400, "MISSING_FILE", "Provide one CSV file in the 'file' field.")
@@ -186,31 +168,103 @@ async def _inspect_csv(request: Request) -> dict[str, object]:
         nonlocal received
         async for chunk in request.stream():
             received += len(chunk)
-            if received > MAX_REQUEST_BYTES:
+            if received > max_body:
                 raise MultiPartException(_BODY_LIMIT_MESSAGE)
             yield chunk
-        # python-multipart.finalize() does not reject truncated forms itself.
-        # Raise while the parser still owns the stream so it closes partial files.
         if parser is not None and not parser.finished:
             raise MultiPartException("Incomplete multipart upload.")
 
     parser = _CompleteMultipartParser(
-        request.headers, bounded_stream(), max_files=1, max_fields=0
+        request.headers, bounded_stream(), max_files=max_files, max_fields=0
     )
     try:
         form = await parser.parse()
         try:
-            file = form.get("file")
-            if file is None:
-                raise APIError(400, "MISSING_FILE", "Provide one CSV file in the 'file' field.")
-            if not isinstance(file, UploadFile) or len(form) != 1:
-                raise APIError(400, "INVALID_UPLOAD", "Provide exactly one uploaded CSV file.")
-            inspection = await run_in_threadpool(_inspect_file, file.file)
-            filename = Path((file.filename or "upload.csv").replace("\\", "/")).name or "upload.csv"
+            yield form
         finally:
             await form.close()
     except MultiPartException as exc:
         if exc.message == _BODY_LIMIT_MESSAGE:
             raise APIError(413, "FILE_TOO_LARGE", "Upload request exceeds the size limit.") from exc
         raise APIError(400, "INVALID_UPLOAD", "Invalid multipart upload.") from exc
+
+
+def _required_file(form, field: str) -> UploadFile:
+    file = form.get(field)
+    if file is None:
+        if field == "file":
+            raise APIError(400, "MISSING_FILE", "Provide one CSV file in the 'file' field.")
+        raise APIError(400, "MISSING_SCHEMA", "Provide one JSON file in the 'schema' field.")
+    if not isinstance(file, UploadFile) or len(form.getlist(field)) != 1:
+        raise APIError(400, "INVALID_UPLOAD", "Provide exactly one file per upload field.")
+    return file
+
+
+async def _inspect_csv(request: Request) -> dict[str, object]:
+    async with _multipart_form(request) as form:
+        file = _required_file(form, "file")
+        if set(form) != {"file"}:
+            raise APIError(400, "INVALID_UPLOAD", "Provide exactly one uploaded CSV file.")
+        inspection = await run_in_threadpool(_inspect_file, file.file)
+        filename = Path((file.filename or "upload.csv").replace("\\", "/")).name or "upload.csv"
     return {"status": "ok", "filename": filename, **inspection}
+
+
+@app.post("/api/schema/validate", openapi_extra={"requestBody": {
+    "required": True, "content": {"multipart/form-data": {"schema": {
+        "type": "object", "required": ["file"],
+        "properties": {"file": {"type": "string", "format": "binary"}},
+    }}},
+}})
+async def validate_uploaded_schema(request: Request) -> dict:
+    return await _safe_request(_validate_schema_upload(request))
+
+
+async def _validate_schema_upload(request: Request) -> dict:
+    async with _multipart_form(
+        request, max_body=MAX_SCHEMA_BYTES + CHUNK_BYTES
+    ) as form:
+        file = _required_file(form, "file")
+        if set(form) != {"file"}:
+            raise APIError(400, "INVALID_UPLOAD", "Provide exactly one uploaded Schema file.")
+        schema = await run_in_threadpool(read_schema, file.file)
+    return {"status": "ok", "schema": schema, "column_order": list(schema["columns"])}
+
+
+@app.post("/api/csv/convert", openapi_extra={"requestBody": {
+    "required": True, "content": {"multipart/form-data": {"schema": {
+        "type": "object", "required": ["file", "schema"],
+        "properties": {
+            "file": {"type": "string", "format": "binary"},
+            "schema": {"type": "string", "format": "binary"},
+        },
+    }}},
+}})
+async def convert_csv_upload(request: Request) -> Response:
+    return await _safe_request(_convert_csv_upload(request))
+
+
+async def _convert_csv_upload(request: Request) -> Response:
+    async with _multipart_form(
+        request, max_files=2,
+        max_body=MAX_UPLOAD_BYTES + MAX_SCHEMA_BYTES + CHUNK_BYTES,
+    ) as form:
+        file = _required_file(form, "file")
+        schema_file = _required_file(form, "schema")
+        if set(form) != {"file", "schema"}:
+            raise APIError(400, "INVALID_UPLOAD", "Only 'file' and 'schema' uploads are accepted.")
+        # Schema processing precedes any CSV validation/conversion.
+        schema = await run_in_threadpool(read_schema, schema_file.file)
+        payload, row_count = await run_in_threadpool(
+            convert_upload, file.file, schema, csv_limit=MAX_UPLOAD_BYTES
+        )
+    return Response(
+        payload, media_type="application/json",
+        headers={
+            "Content-Disposition": 'attachment; filename="converted.json"',
+            "X-Row-Count": str(row_count),
+            "X-Column-Count": str(len(schema["columns"])),
+            "Cache-Control": "no-store",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )

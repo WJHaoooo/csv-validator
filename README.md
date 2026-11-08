@@ -194,11 +194,12 @@ CLI
 | 模組 | 責任 |
 |---|---|
 | cli.py | 解析參數、協調流程、stdout／stderr 與退出碼 |
-| web.py | Web 頁面、Inspect API、上傳限制、預覽與資源清理 |
+| web.py | Web 頁面、multipart／HTTP 邊界、Inspect／Schema／Convert 路由 |
+| web_service.py | 有界輸入、共用核心適配、可定位且安全的錯誤及有界 JSON |
 | schema.py | UTF-8 載入、JSON 解析與重複 key／結構驗證 |
 | csv_reader.py | 標準 CSV 解析、共用表頭名稱規則、Schema 必要欄位與檔案生命週期 |
-| converter.py | record 欄位數、required／空值、型別轉換，回傳 list[dict] |
-| writer.py | 路徑檢查、標準 JSON 序列化、暫存及不覆寫發布 |
+| converter.py | 共用逐列 iterator；CLI 仍透過 convert_csv 回傳完整 list[dict] |
+| writer.py | 共用嚴格 JSON encoder；CLI 的暫存及不覆寫發布不變 |
 
 CSV record 可跨多個實體行，因此用讀取前的 `reader.line_num + 1` 定位起始行，不用資料列索引加 2。
 表頭先驗證重複名稱，再建立位置對應，避免 dict 同名 key 覆寫造成資料遺失。
@@ -221,111 +222,161 @@ Windows 行為見 [Python os.rename 文件](https://docs.python.org/3/library/os
 輸出不得與 CSV／Schema 路徑相同。若清理暫存失敗會另外警告；正式發布已成功時，
 警告代表可能殘留暫存名稱，不代表正式 JSON 不完整。
 
-## Web v1 CSV Explorer（W1）
+## Web v1 Schema Editor & Conversion（W2）
 
-獨立 ASGI app 為 `csv_validator.web:app`。首頁提供原生 HTML/CSS/JavaScript，
-不使用 React、CDN、伺服器 Session 或資料庫。CLI 的完整驗證行為保持不變。
+獨立 ASGI app：`csv_validator.web:app`。沿用原生 HTML/CSS/JavaScript，
+沒有 React、伺服器 Session、資料庫或永久檔案儲存。
 
-### 本機啟動與使用
+### 啟動與三階段操作
 
 ```powershell
 Set-Location C:\Hao\csv-validator
 .\.venv\Scripts\python.exe -m pip install -e ".[web,dev]"
-.\.venv\Scripts\python.exe -m uvicorn csv_validator.web:app --host 127.0.0.1 --port 8001
+.\.venv\Scripts\python.exe -m uvicorn csv_validator.web:app --host 127.0.0.1 --port 8002
 ```
 
-開啟 http://127.0.0.1:8001/，選擇或拖入一個 CSV：
+開啟 http://127.0.0.1:8002/。若埠已被占用，另選未使用埠；此指令只綁定 localhost，並非公開部署。
 
-1. 顯示檔名、欄位數量與最多前五筆資料記錄。
-2. 欄位預設全部勾選，可全選、取消全選及搜尋；搜尋不改變勾選狀態。
-3. 至少選取一個欄位才能繼續。
-4. 下一步只顯示「W2 尚未開發」佔位畫面，不代表已完成資料驗證。
-5. 重新上傳會立即清除舊預覽、搜尋與選擇；舊請求會取消，較慢的舊回應不覆蓋新檔案。
+1. **Upload & Explore**：上傳 CSV，預覽前五筆原始字串並勾選欄位。
+2. **Configure Rules**：每欄預設 `str`、`required: false`；設定型別、必填或匯入 Schema。
+3. **Results**：完整驗證成功後顯示筆數、欄位數、前五筆 JSON 與完整下載按鈕。
 
-File、原始表頭順序、已選欄位及預覽保存在頁面記憶體，
-由前端 `getExplorerState()` 提供 W2 handoff。已選欄位仍依原始順序輸出，沒有排序或轉型。
-重新整理頁面會清除狀態，不使用 localStorage。
-預覽中的「空字串」只是顯示提示，記憶體與 API 仍保留原始 `""`。
-多行儲存格保留換行，寬表格在自身區塊內捲動。
+返回欄位選擇會保留已設定規則。取消勾選的 CSV 欄位不納入視覺化 Schema；
+重新勾選可找回先前設定。重新上傳 CSV 會清除舊規則與結果。
+所有狀態只存於頁面記憶體，不使用 localStorage；重新整理即清除。
 
-若埠被占用，選擇另一個未使用的埠；本機啟動僅綁定 localhost，並以 Ctrl+C 停止前景伺服器。
-`web` 為 FastAPI、Starlette、python-multipart、Uvicorn 選用依賴；
-`dev` 包含 pytest 與 TestClient 所需的 httpx2。
+轉換中停用提交按鈕，避免重複點擊。修改規則、改變選取、匯入 Schema 或重傳 CSV
+都會使舊結果失效、撤銷下載 URL；過期的非同步回應不會覆蓋目前狀態。
+錯誤時保留 CSV 與規則，可修改後重試，不提供部分成功下載。
 
-### API
+### Schema 匯入與下載
 
-```powershell
-Invoke-RestMethod http://127.0.0.1:8001/health
-curl.exe -i -F "file=@examples/valid.csv" http://127.0.0.1:8001/api/csv/inspect
-```
+「匯入並取代 Schema」會先送至後端既有 Schema Validator。
+合法匯入取代目前規則，不合併；失敗則保留原設定並顯示原因。
+僅接受本專案自訂 JSON 格式，不是任意 JSON Schema 標準。
 
-GET /health 保持 200、`{"status":"ok"}`。
-POST /api/csv/inspect 接收 multipart/form-data 的單一 `file` 欄位，例如：
+- 匯入後保留全部定義與原順序，不默默刪除 CSV 沒有的欄位。
+- 缺失欄位明確標示「CSV 沒有此欄位」：必填會在轉換時失敗，非必填輸出 null。
+- CSV 沒有的匯入欄位不因返回／取消選取 CSV 欄位而消失；
+  如需移除，可匯入修改後的 Schema，或重新上傳 CSV 重建規則。
+- 下載的 schema.json 可直接供 CLI 使用，也可再次匯入。
+- 前端用 Map 與獨立順序陣列保存規則；即使欄名為 "10"、"2"，也不讓 JavaScript object 的數字 key 排序改變 Schema 順序。
+- 檔名、欄名、原始值與 JSON 預覽皆以安全文字方式渲染，不當成 HTML。
+
+### API 契約
+
+| 路由 | multipart 檔案欄位 | 成功 |
+|---|---|---|
+| GET /health | 無 | 200，`{"status":"ok"}` |
+| POST /api/csv/inspect | `file`：CSV | 200，status、filename、columns、preview、preview_count |
+| POST /api/schema/validate | `file`：Schema JSON | 200，status、schema、column_order |
+| POST /api/csv/convert | `file`：CSV；`schema`：Schema JSON | 200，完整 UTF-8 JSON array |
+
+三個 POST 都只接受指定的檔案欄位，不接受普通表單欄位或客戶端本機輸出路徑。
+原始上傳檔名不決定伺服器路徑。
+
+Inspect 保持 W1 契約：整份檔案檢查大小與 UTF-8，只解析表頭及前五筆 record，
+拒絕空白／重複表頭；成功不代表完整資料驗證。
+
+Schema 驗證回應例如：
 
 ```json
 {
   "status": "ok",
-  "filename": "customers.csv",
-  "columns": ["id", "name", "phone"],
-  "preview": [
-    ["001", "Example Alpha", "0000000001"],
-    ["002", "Example Beta", ""]
-  ],
-  "preview_count": 2
+  "schema": {
+    "columns": {
+      "id": {"type": "int", "required": true},
+      "missing": {"type": "str", "required": false}
+    }
+  },
+  "column_order": ["id", "missing"]
 }
 ```
 
-相容性與驗證範圍：
+Convert 先驗證 Schema，再呼叫共用逐列 Converter。
+完整 JSON 在回應前全部驗證與序列化完成；沒有 HTTP 部分成功串流。
+UTF-8、資料型別與錯誤順序交由同一 Converter 判斷，與 CLI Fail Fast 一致。
 
-- 保留 W0 的 `status: "ok"`，新增 filename、columns、preview、preview_count。
-- 檔名只用於顯示，移除路徑部分，不決定伺服器暫存路徑。
-- 保留原始欄位名稱、順序與儲存格字串；表頭空白或重複會拒絕，
-  重用 CSV Reader 的 `validate_header_names()`，CLI 也使用同一檢查。
-- 表頭後沒有資料時回傳空 preview；最多解析五筆 record，不為預覽解析第六筆。
-- 整份檔案仍須讀取以檢查大小及 UTF-8；**不再像 W0 一樣掃描全部 CSV record 語法**。
-  第六筆之後的 CSV 語法不在 W1 檢查範圍，此為必要的檢查範圍調整。
-- 成功不代表完整 CSV／Schema 驗證，不檢查 record 欄位數、required 或資料型別。
-- 不提供 Schema Editor、JSON 轉換 API、下載、登入或公開部署。
-- 使用 textContent 與 DOM 節點渲染檔名、欄位與儲存格，不把 CSV 字串當成 HTML。
+成功的 response body 是 JSON array 本身，不是包裝物件：
 
-錯誤契約延續 W0：
+```json
+[
+  {
+    "id": 1,
+    "missing": null
+  }
+]
+```
+
+回應 headers：
+
+- Content-Type: application/json（內容 UTF-8）
+- Content-Disposition: attachment; filename="converted.json"
+- X-Row-Count：完整資料筆數
+- X-Column-Count：Schema 欄位數
+- Cache-Control: no-store
+- X-Content-Type-Options: nosniff
+
+前端保存原始 response Blob 供下載，不重新序列化結果。
+畫面從伺服器 JSON 文字只擷取前五個完整 object，不把資料數值轉成 JS Number，
+因此保留大整數、80.0、Unicode 與 key 順序；不建立完整結果的 JavaScript object 清單。
+完整 body 仍以有上限的 Blob／文字留在瀏覽器記憶體。
+
+### 錯誤契約
+
+沿用 `{"error":{"code":"...","message":"..."}}`；
+正式資料錯誤另外提供適用的 details：
 
 ```json
 {
   "error": {
-    "code": "INVALID_CSV",
-    "message": "duplicate CSV header: 'id'"
+    "code": "CSV_ROW_ERROR",
+    "message": "expected an ASCII decimal integer with optional sign",
+    "details": {
+      "line": 3,
+      "column": "id",
+      "raw_value": "bad",
+      "raw_value_truncated": false,
+      "expected_type": "int"
+    }
   }
 }
 ```
 
-| HTTP | code | 意義 |
+line 是 record 起始實體行數。原始值最多回傳 256 字元，截斷時明確標記；
+無法解析的 record 不虛構欄位或原始值。錯誤不回傳內部檔案路徑或 traceback，日誌不記錄 CSV 原文。
+
+| HTTP | code | 說明 |
 |---:|---|---|
-| 400 | MISSING_FILE / INVALID_UPLOAD / EMPTY_FILE | 缺檔、multipart 不合法或空檔 |
-| 413 | FILE_TOO_LARGE | 檔案或 multipart body 超限 |
-| 422 | INVALID_UTF8 / INVALID_CSV / INVALID_REQUEST | 編碼、預覽範圍 CSV 語法或表頭錯誤 |
-| 500 | INTERNAL_ERROR | 固定安全訊息，不回傳 traceback 或暫存路徑 |
+| 400 | MISSING_FILE / MISSING_SCHEMA / INVALID_UPLOAD / EMPTY_FILE | 請求或檔案缺失 |
+| 413 | FILE_TOO_LARGE / SCHEMA_TOO_LARGE / OUTPUT_TOO_LARGE | 輸入或輸出超限 |
+| 422 | SCHEMA_ERROR | 自訂 Schema 語法、結構、UTF-8 或過深巢狀錯誤 |
+| 422 | CSV_HEADER_ERROR | 正式驗證的表頭或必要欄位錯誤 |
+| 422 | CSV_ROW_ERROR | 欄位數、必填儲存格或型別錯誤 |
+| 422 | INVALID_UTF8 / INVALID_CSV / INVALID_REQUEST | 編碼、Inspect 格式或請求錯誤 |
+| 500 | JSON_WRITE_ERROR / INTERNAL_ERROR | 安全的序列化或內部失敗訊息 |
 
-HTTP 404 等框架錯誤也使用 error envelope（HTTP_ERROR）。
-CSV 原文不寫入應用日誌。
+只有 HTTP 200 的 Convert 回應才是可下載結果；失敗不包含 Content-Disposition。
+預期錯誤只回報第一個，不跳過錯誤列、不收集其他錯誤。
 
-### 上傳與暫存安全
+### 安全與資源上限
 
-- 檔案上限 5 MiB（5,242,880 bytes）；含 multipart overhead 的 body 上限為 5 MiB + 64 KiB。
-- 以實際串流計數，不信任 Content-Length；最多一個檔案、零個普通表單欄位。
-- 每次最多讀取 64 KiB，整份 UTF-8 用 incremental decoder 驗證。
-- 安全 TemporaryDirectory 內固定使用 upload.csv，關閉寫入後才交給既有 CSV Reader。
-- framework spool 與檢查副本可能同時占用暫存磁碟，不在記憶體建立完整檔案副本。
-- 成功、格式錯誤與一般例外均關閉 spool 並清理副本；截斷 multipart 在 parser 仍持有資源時被拒絕。
-- threadpool 中執行檢查，不向使用者暴露內部例外文字。
-- 靜態 HTML/CSS/JS 透過 package-data 納入套件，不依賴工作目錄。
+- CSV：5 MiB（5,242,880 bytes）。
+- Schema：128 KiB（131,072 bytes），分塊讀取、以既有 parse_schema 驗證。
+- JSON 輸出：8 MiB（8,388,608 bytes），包含縮排與換行。
+- Convert 整體 multipart body：5 MiB + 128 KiB + 64 KiB；最多兩個檔案、零個普通欄位。
+- Inspect body 保持 5 MiB + 64 KiB；Schema 驗證 body 為 128 KiB + 64 KiB。
+- 依實際串流計數，不信任 Content-Length；每次最多讀取 64 KiB。
+- 透過安全暫存路徑適配共用 Converter，正常、失敗與輸出超限皆關閉檔案、清理副本及框架 spool。
+- Web 逐列使用共用 iterator／JSON encoder，在超限時立刻停止，不先建立可能巨大的 list。
+- 最終 JSON 僅有界緩存在記憶體，全部成功才回傳；伺服器不永久保存 CSV、Schema 或 JSON。
+- 不使用 NaN／Infinity；重用 CLI 的 ensure_ascii=False、allow_nan=False、indent=2。
+- 靜態資源加入 W2 版本識別，避免舊快取模組與新頁面不一致。
 
-### 部署限制
-
-W1 不代表已具備公開部署防護。仍須平台／反向代理的 body 限制、速率限制、
-並行／threadpool 與處理逾時限制、記憶體及暫存磁碟配額、HTTPS／Host 設定，
-以及中斷清理與監控政策。大量欄位或很長的預覽字串也可能增加瀏覽器 DOM 負擔。
-沒有新增 CORS 放行、資料庫或部署設定。
+這些是單請求上限，不是完整公開部署防護。W3 仍需入口／反向代理限制、速率與並行限制、
+逾時、程序記憶體／暫存磁碟配額、HTTPS／Host、監控與中斷清理政策。
+大欄位／大量 Schema 欄位仍可能增加 DOM 或記憶體負擔；下載和預覽也保留有上限的瀏覽器記憶體副本。
+沒有 Docker、登入、資料庫或公開部署。
 
 ## Testing
 
@@ -338,6 +389,21 @@ W1 不代表已具備公開部署防護。仍須平台／反向代理的 body �
 測試包含 Schema、CSV 表頭、逐列轉型、實體行數、Fail Fast、CLI subprocess、
 JSON 內容與型別、Unicode、null、輸出保護、並行 writer 與 I/O 故障注入。
 公開 examples 也透過真正 CLI 自動驗收，合法輸出須逐 byte 符合 expected.json。
+
+W2 驗收（2026-11-08，Windows / Python 3.14.8 / pytest 9.2.0）：
+
+- 完整 pytest：**319 passed**（7.26 秒）；W2 新增 41 項 API／整合與邊界測試。
+- 測試涵蓋實際 CLI 位元組等價、型別／空值、缺失欄位、順序、Unicode、完整 CSV 語法、
+  無部分下載、Schema／CSV／輸出上限、暫存清理、原始值截斷、深層 Schema 及首錯順序。
+- 可選前端單元測試 `node tests/frontend_rules.mjs` 通過；只用 Node 內建功能，沒有 npm 或 Web 執行期 Node 依賴。
+- 真正瀏覽器驗收：預設 str／false、取消欄位、返回保留規則、必填錯誤與重試、
+  匯入取代、缺失必填失敗／非必填 null、Schema 下載再匯入、結果失效與重傳重設。
+- 瀏覽器下載 JSON 已與同一份下載 Schema 下的 CLI 核心比對等價；
+  預覽另確認 80.0 保留，前端單元測試確認大整數不捨入且最多五筆。
+- 390px 規則設定頁無整頁水平溢出，維持 W1 視覺。
+- 真實 HTTP Convert 成功結果與 examples/expected.json 位元組一致；失敗為 422、無下載 header，且首錯順序與 CLI 一致。
+- 實際 wheel 打包後，從暫存副本驗證頁面、新靜態模組、web_service 與大整數轉換可用。
+- W1 提交為 1178240；W2 未 Commit、未 Push、未進入 W3。
 
 W1 驗收（2026-11-08，Windows / Python 3.14.8 / pytest 9.2.0）：
 
@@ -380,7 +446,7 @@ CLI MVP 歷史驗收（2026-11-07，Web 開發前）：在獨立暫存專案與�
 - 中斷或清理權限問題可能殘留暫存檔；不保證斷電後目錄 metadata 持久性。
 - 非 Windows 發布依賴 hard link，目前未在非 Windows 平台實測。
 - Python 3.12 及其他版本尚未實測。
-- Web 僅提供 W1 Explorer；尚無 Schema Editor、JSON 轉換／下載 API、資料庫、Docker 或公開部署。
+- Web 已提供 W2 規則編輯與轉換；尚無登入、資料庫、Docker、批次轉換或公開部署。
 
 ## Project Layout
 
@@ -399,10 +465,12 @@ csv-validator/
 │   ├── converter.py
 │   ├── writer.py
 │   ├── web.py
+│   ├── web_service.py
 │   └── static/
 │       ├── index.html
 │       ├── style.css
-│       └── app.js
+│       ├── app.js
+│       └── rules.js
 ├── tests/
 │   ├── test_project_setup.py
 │   ├── test_schema.py
@@ -412,7 +480,9 @@ csv-validator/
 │   ├── test_cli.py
 │   ├── test_examples.py
 │   ├── test_web.py
-│   └── test_explorer.py
+│   ├── test_explorer.py
+│   ├── test_web_conversion.py
+│   └── frontend_rules.mjs
 ├── pyproject.toml
 ├── .gitattributes
 ├── .gitignore

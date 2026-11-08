@@ -1,5 +1,6 @@
 """Validate CSV records and convert schema columns to Python values."""
 
+from collections.abc import Iterator
 import csv
 import math
 from os import PathLike
@@ -35,6 +36,7 @@ class CSVRowError(ValueError):
         raw_value: str | None = None,
         expected_type: str | None = None,
     ):
+        self.reason = reason
         self.path = Path(path)
         self.line = line
         self.column = column
@@ -70,13 +72,12 @@ def _convert_cell(raw: str, type_name: str, required: bool) -> CellValue:
     return value
 
 
-def convert_csv(
+def iter_converted_rows(
     path: str | PathLike[str], schema: dict
-) -> list[dict[str, CellValue]]:
-    """Validate schema, headers, and all records; return results only on success."""
+) -> Iterator[dict[str, CellValue]]:
+    """Yield validated rows using the same rules as the CLI list interface."""
     schema = validate_schema(schema)
     source = Path(path)
-    results = []
     with open_csv_reader(source) as reader:
         headers = read_header_record(reader, source)
         try:
@@ -126,5 +127,11 @@ def convert_csv(
                         source, start_line, str(exc),
                         column=name, raw_value=raw, expected_type=config["type"],
                     ) from exc
-            results.append(converted)
-    return results
+            yield converted
+
+
+def convert_csv(
+    path: str | PathLike[str], schema: dict
+) -> list[dict[str, CellValue]]:
+    """Validate all records; return a complete list only on success."""
+    return list(iter_converted_rows(path, schema))

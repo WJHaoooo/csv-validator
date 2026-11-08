@@ -4,17 +4,17 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>CSV Explorer · CSV Validator</title>
-  <link rel="stylesheet" href="/static/style.css">
-  <script type="module" src="/static/app.js"></script>
+  <link rel="stylesheet" href="/static/style.css?v=w2">
+  <script type="module" src="/static/app.js?v=w2"></script>
 </head>
 <body>
   <header class="site-header">
     <div class="brand"><span class="brand-mark" aria-hidden="true">C<span>↗</span></span><span>CSV Validator<small>DATA IMPORT TOOLKIT</small></span></div>
-    <span class="stage-badge">WEB v1 <span>／</span> W1</span>
+    <span class="stage-badge">WEB v1 <span>／</span> W2</span>
   </header>
   <main>
-    <nav class="steps" aria-label="操作階段"><span aria-current="step"><b>01</b> 探索 CSV</span><span class="step-line"></span><span><b>02</b> 設定規則 <small>尚未開發</small></span></nav>
-    <section class="intro"><p class="eyebrow">CSV EXPLORER</p><h1>先看清資料，再選擇欄位。</h1><p>上傳 CSV、檢視前 5 筆原始資料，選擇下一步要保留的欄位。<br class="desktop-break">這是資料探索階段，尚未進行 Schema 驗證或型別轉換。</p></section>
+    <nav class="steps" aria-label="操作階段"><span id="step-explore" aria-current="step"><b>01</b> 探索 CSV</span><span class="step-line"></span><span id="step-rules"><b>02</b> 設定規則</span><span class="step-line"></span><span id="step-results"><b>03</b> 轉換結果</span></nav>
+    <section class="intro"><p id="intro-eyebrow" class="eyebrow">CSV EXPLORER</p><h1 id="intro-title">先看清資料，再選擇欄位。</h1><p id="intro-description">上傳 CSV、檢視前 5 筆原始資料，選擇要保留的欄位。此階段尚未完成資料驗證。</p></section>
 
     <section id="dropzone" class="upload-card" aria-label="CSV 上傳區域">
       <div class="upload-icon" aria-hidden="true">↑</div>
@@ -48,10 +48,24 @@
       </div>
       <div class="continue-bar"><div><strong id="selected-count" aria-live="polite"></strong><p id="selection-hint"></p></div><button id="next-step" class="button button-primary" type="button" disabled>下一步：設定規則 <span aria-hidden="true">→</span></button></div>
     </section>
-    <section id="next-placeholder" class="placeholder panel" hidden aria-labelledby="next-title">
-      <p class="eyebrow">NEXT / W2</p><h2 id="next-title">規則設定尚未開發</h2>
-      <p id="handoff-summary"></p><p>CSV File、原始表頭、已選欄位與預覽只保存在目前頁面記憶體。尚未完成 Schema 驗證，也未產生 JSON。</p>
-      <button id="back-to-explorer" class="button button-outline" type="button">← 返回欄位選擇</button>
+    <section id="rules-editor" hidden aria-label="Schema 規則設定">
+      <div class="rules-toolbar">
+        <div><h2>Schema 規則 <span id="rules-count" class="count-badge"></span></h2><p>預設 str／非必填。返回選擇欄位不會清除已設定的規則。</p></div>
+        <div class="schema-actions"><label class="button button-outline upload-button" for="schema-file">匯入並取代 Schema<input id="schema-file" type="file" accept=".json,application/json"></label><button id="download-schema" type="button" class="button button-outline">下載 Schema</button></div>
+      </div>
+      <p class="import-note">匯入會取代目前設定，不會合併；CSV 沒有的 Schema 欄位也會保留。僅支援本專案自訂 JSON 格式，最大 128 KiB。</p>
+      <form id="rules-form">
+        <div id="rules-list" class="panel rules-list" aria-label="欄位規則"></div>
+        <p id="rule-status" class="upload-status" role="status" aria-live="polite"></p>
+        <div id="rule-error" class="error-box" role="alert" hidden></div>
+        <div class="continue-bar"><button id="back-to-explorer" class="button button-outline" type="button">← 返回欄位選擇</button><button id="convert-button" class="button button-primary" type="submit">驗證並轉換</button></div>
+      </form>
+    </section>
+    <section id="results" hidden aria-label="JSON 轉換結果">
+      <div class="success-banner"><span aria-hidden="true">✓</span><div><h2 id="result-status"></h2><p>全部資料通過後才提供下載；沒有跳過錯誤列或部分成功結果。</p></div></div>
+      <div class="result-metrics"><div><span>已轉換資料筆數</span><strong id="result-rows">0</strong></div><div><span>已輸出欄位數</span><strong id="result-columns">0</strong></div></div>
+      <div class="panel json-panel"><div class="panel-heading"><h2>JSON 預覽</h2><span id="json-preview-count" class="preview-badge"></span></div><pre id="json-preview" tabindex="0" aria-label="前五筆 JSON 預覽"></pre></div>
+      <div class="continue-bar"><button id="back-to-rules" class="button button-outline" type="button">← 返回規則設定</button><a id="download-json" class="button button-primary" download="converted.json">下載完整 JSON ↓</a></div>
     </section>
   </main>
   <footer class="site-footer"><span>CSV Validator <span class="footer-dot">·</span> Schema-driven data import</span><span>重新整理頁面即清除探索狀態</span></footer>

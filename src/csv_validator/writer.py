@@ -1,6 +1,6 @@
 """Serialize validated data and publish complete JSON without overwriting."""
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 import json
 import os
 from os import PathLike
@@ -11,6 +11,13 @@ import warnings
 
 class JSONWriteError(ValueError):
     """JSON serialization, output safety checks, or publication failed."""
+
+
+def iter_json_text(data: object) -> Iterator[str]:
+    """Share strict Unicode JSON serialization between CLI and Web."""
+    return json.JSONEncoder(
+        ensure_ascii=False, allow_nan=False, indent=2
+    ).iterencode(data)
 
 
 def check_output_path(
@@ -63,7 +70,7 @@ def write_json(
     target = check_output_path(path, input_paths=input_paths)
     try:
         payload = (
-            json.dumps(data, ensure_ascii=False, allow_nan=False, indent=2) + "\n"
+            "".join(iter_json_text(data)) + "\n"
         ).encode("utf-8")
     except (TypeError, ValueError, OverflowError, RecursionError) as exc:
         raise JSONWriteError(f"{target}: JSON serialization failed: {exc}") from exc
