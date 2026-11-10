@@ -1,228 +1,202 @@
-# Render 部署準備與 Hao 操作指南（W3-B）
+# Hao 的 Render 公開 Demo 部署指南（W007）
 
-日期：2026-11-09。此文件與 render.yaml 是**部署草稿，不是已上線服務**。
-本次沒有 Push、登入 Render、建立服務、付費資源、網域或公開端點。
+更新：2026-11-11。對象為低流量、非正式營運、學習／求職展示的匿名公開 Demo。
+本文件取代 W3-B／W006「一定要提供可信 Proxy IP 才能啟動」的指示。
+本次只修正、測試、Commit／Push，沒有登入 Render、建立服務、付費資源或公開部署。
 
-**先讀發布阻塞清單。不要按 Create Web Service／Apply Blueprint 來測試設定。**
-Render Web Service 建立後會公開接收網路流量；關閉 auto-deploy 也不會阻止首次部署。
-目前沒有滿足全部公開服務安全條件。
+**CSV／Schema 會傳至伺服器，不是只在本機私密轉換；不要上傳敏感或機密資料。**
 
-## 1. 實際專案設定
+## 1. 最終設定
 
 | Render 欄位 | 值 |
 | --- | --- |
-| Repository | https://github.com/WJHaoooo/csv-validator |
-| Service type / Runtime | Web Service / Python 3（Linux native runtime） |
-| Branch / Root Directory | main / 留空，使用 repository root |
-| Python | .python-version：3.14.10；不依賴 Render 隨時間改變的預設 |
+| Repository / Branch | WJHaoooo/csv-validator / main，核對本次修正已推送 |
+| Type / Language | Web Service / Python 3，非 Static Site |
+| Root Directory | 留空，repository root |
+| Python | .python-version 固定 3.14.10 |
 | Build Command | bash scripts/render-build.sh |
 | Start Command | python scripts/start_render.py |
 | Health Check Path | /health |
-| Instance Type / Count | Free / 1（僅初期評估目標，不是正式服務安全背書） |
-| Auto-Deploy | Off |
-| Persistent Disk / Database | 不建立 |
+| Instance Type / Count | Free / 1 |
+| Auto-Deploy | Off，初期手動部署 |
+| Database / Disk | 不建立 |
 
-Render 要求監聽 0.0.0.0 與 PORT；啟動腳本使用 PORT（平台預設 10000），只開一個 Uvicorn worker，
-沒有 reload，也不受 WEB_CONCURRENCY 自動放大。
-參見 [Web Services](https://render.com/docs/web-services)、[Python version](https://render.com/docs/python-version)、
-[Blueprint 規格](https://render.com/docs/blueprint-spec)。
+Build 固定 pip==26.2.1、隔離建置 setuptools==84.2.1，依 requirements/render.txt 安裝 .[web]，
+再執行 pip check。不安裝 dev extra、pytest、httpx2、Node 或驗證工具。
+15 個 runtime 依賴採精確版本約束，但不是帶 hashes 的完整供應鏈 lock；更新時須重測、重掃。
 
-Build 實際順序：
-1. 安裝 pip==26.2.1，以固定支援 build constraints 的 installer。
-2. 以 requirements/build.txt 固定隔離建置的 setuptools==84.2.1。
-3. 以 requirements/render.txt 固定 15 個 Web runtime 依賴版本，再安裝非 editable 的 .[web]。
-4. pip check。正式環境不安裝 .[dev]、pytest、httpx2、Node 或 Linux 驗證工具。
+啟動為 Uvicorn 單 worker，使用 0.0.0.0／PORT，沒有 reload。
+見 [Render Web Services](https://render.com/docs/web-services)、
+[Python 設定](https://render.com/docs/python-version)、
+[Blueprint](https://render.com/docs/blueprint-spec)。
+PYTHON_VERSION 若曾於 Dashboard 設定，會優先於檔案；須移除或同樣設為 3.14.10。
 
-這是精確版本約束，不是含 artifact hashes 的供應鏈 lock；升版須重跑 Linux 安裝／測試與公告掃描。
-專案仍宣告 Python>=3.12；本次未驗證 3.12。PYTHON_VERSION 環境變數會優先於 .python-version，
-若曾設定，須移除或設為同樣 3.14.10，不能無意使用不同版本。
+## 2. Proxy／HTTPS 的最小安全修正
 
-## 2. 環境變數與代理信任
+### 預設：不設定可信代理（建議首次 Demo 使用）
 
-| 變數 | 設定／預期值 |
+CSV_VALIDATOR_TRUSTED_PROXY_IPS 未設定或空值時：
+- Uvicorn proxy_headers=False，forwarded_allow_ips=""，覆寫 Render 環境的廣泛信任預設。
+- 不採信 X-Forwarded-For、X-Forwarded-Proto、X-Forwarded-Host、Forwarded 或轉送 port。
+- ASGI client 保留直接 TCP 來源；ASGI scheme 保留內部實際連線協定，不由請求標頭改寫。
+- Render 平台自動提供 RENDER=true 和精確 RENDER_EXTERNAL_HOSTNAME；啟動器驗證 hostname，
+  以部署設定將公開 scheme 固定為 https，傳給安全層做 Origin 比對與 HSTS。
+  這是伺服器設定，不是從上傳、Origin、Host 或 X-Forwarded-* 接受的宣告。
+- Host 仍須精確符合 allowlist，Origin 須符合 https + 實際 Host + port；
+  不因此放行其他網域、HTTP Origin 或 wildcard。
+- 非 Render 的本機啟動不固定公開 scheme，正常使用內部 HTTP；不要自行設定 RENDER=true 作一般本機開發。
+
+依據是 Render 公開文件明確說明：入口將公開 HTTP redirect 至 HTTPS，
+由 load balancer 終止 TLS，再以 HTTP 傳入 app；app port 不直接公開。
+所以不必為判斷公開 HTTPS 而信任客戶端可偽造的協定標頭。
+這項平台假設必須在首次實際部署驗證；其他主機／平台不能直接套用。
+來源：[Render 入口／TLS](https://render.com/docs/web-services)、
+[平台環境變數](https://render.com/docs/environment-variables)。
+
+CSV_VALIDATOR_PUBLIC_SCHEME 是 launcher 傳給安全層的內部設定，不必在 Dashboard 填；
+只支援 https 或未設定，不會改寫 client／transport，也不代表內部 socket 已加密。
+目前 UI 使用相對 URL，不靠轉送標頭產生公開下載 URL。未來若新增絕對 URL 或其他代理平台，須另行審查。
+
+**限制：直接來源可能全部是平台代理，不能可靠實現每位使用者的獨立 IP 限流。**
+未設定 Origin 的非瀏覽器請求仍可使用 API，這不代表可信；本專案沒有宣稱具備 IP 限流或認證。
+
+### 選用：已確認的明確可信代理
+
+只有取得官方文件／支援對實際 ingress 來源及 header 清洗規則的證據時，才設定
+CSV_VALIDATOR_TRUSTED_PROXY_IPS。使用逗號分隔的窄 IP／CIDR；
+拒絕 *、0.0.0.0/0、::/0、合併後涵蓋全網的 CIDR 清單、非 IP 名稱及非法值，設定錯誤會停止啟動。
+程式只能驗證格式，無法證明填入值本身可信。
+不得用 Outbound IP、DNS 解析或單次觀察到的 IP 猜測來源，也不要把本機測試 127.0.0.1 搬到 Render。
+此模式才啟用 Uvicorn proxy headers；Forwarded 不是額外授權的信任來源。
+參見 [Uvicorn proxy 說明](https://uvicorn.dev/deployment/)。
+
+## 3. 環境變數：哪些需手動填
+
+| 變數 | 必填／來源 | 安全設定 |
+| --- | --- | --- |
+| PORT | Render 自動提供 | 不自行寫死 |
+| RENDER | Render 自動提供 true | 不由客戶端控制，不手動偽造 |
+| RENDER_EXTERNAL_HOSTNAME | Render 自動提供 | 使用實際 onrender.com hostname |
+| CSV_VALIDATOR_ALLOWED_HOSTS | 通常不用填 | 預設精確取平台 hostname；自訂網域時填所有有效主機，逗號分隔，無 scheme／port／path／wildcard |
+| CSV_VALIDATOR_TRUSTED_PROXY_IPS | **非必填，首次建議不設** | 刪除舊的猜測／placeholder；沒有證據就留空 |
+| CSV_VALIDATOR_MAX_ACTIVE_REQUESTS | 建議 2；程式預設 2 | 保持單 worker／低並行 |
+| CSV_VALIDATOR_UPLOAD_TIMEOUT_SECONDS | 建議 15；程式預設 15 | 合作式上傳期限，非轉換硬性期限 |
+| PYTHONDONTWRITEBYTECODE | 建議 1 | render.yaml 已列 |
+| PYTHONUNBUFFERED | 建議 1 | render.yaml 已列 |
+| PYTHON_VERSION | 不必填 | 若有，須與 .python-version 一致 |
+
+沒有必填的使用者秘密或 Proxy IP。render.yaml 移除原本 sync:false 的代理變數要求。
+Render health check 的 Host 可能是已驗證自訂網域，新增網域須同步更新 allowlist，
+不可為了 health 通過而關閉 Host 檢查。見 [Health Checks](https://render.com/docs/health-checks)。
+
+## 4. 保留的基本防護與 Demo 風險
+
+保留 CSV 5 MiB、Schema 128 KiB、JSON 8 MiB、multipart 總長／檔數限制、有界讀取、
+Fail Fast、完整成功才下載、安全 JSON 錯誤、文字 DOM 渲染、精確 Host／Origin、安全標頭與自動暫存清理。
+API 活躍上限 2；Uvicorn limit_concurrency=8、backlog=16，無等待中的無界轉換佇列。
+安全標頭包含 CSP、nosniff、禁止 framing、no-store；沒有額外開 CORS。
+
+本次定位允許 Hao 開始首次 Free Demo 驗證，不再把所有企業級平台防護視為永久啟動門檻；
+以下仍是**未解決的殘餘風險**，不是已完成防護：
+
+- 無每使用者 IP 限流／全域速率限制；匿名流量可能造成 503、服務不可用或用量耗盡。
+  Render 的 DDoS／inbound 防護不等於本 app 已驗證的精確限流；管理 REST API 限流也不保護 CSV API。
+- 15 秒只限制合作式上傳接收，不能中斷同步解析／CPU 轉換 thread；
+  keep-alive 5 秒、graceful shutdown 20 秒都不是單請求硬性執行期限。
+- 沒有本 app 保證的硬性 CPU／RSS／處理時間／暫存磁碟配額。
+  方案資源上限、超限重啟行為與監控須於 Render 實際確認，不承諾抗 DoS 或 production SLA。
+- 一般成功／失敗關閉 spool、刪除私有暫存副本，不永久儲存資料；kill／斷電不保證 finally 或安全抹除。
+- 不記錄 CSV／Schema 原文、原始值或 exception traceback；Uvicorn access log 關閉。
+  平台日誌留存／備份不是程式能全面保證，勿用 body dump 排錯。
+- 只適合虛構、非敏感示範資料；沒有登入、歷史紀錄、資料庫、disk 或敏感資料處理保證。
+- Linux 本機通過不等於 Render 的實際 TLS／網路／檔案系統已驗收，也不是滲透測試。
+
+若觀察異常大量請求、資源耗盡、超額費用風險或資料外洩疑慮，先 Suspend Demo，
+再評估平台防護／調整方案，不為了維持上線而放寬檢查。
+
+## 5. Hao 在 Dashboard 的完整操作順序
+
+以下由 Hao 日後親自操作，本次 Codex 不建立服務：
+
+1. 登入 Render，確認 GitHub 授權只涵蓋需要的 csv-validator。
+2. New → Web Service → Git Provider，選 WJHaoooo/csv-validator；
+   branch main，核對含本次修正的 commit，Language Python 3，Root Directory 留空。
+3. 填第 1 節 Build／Start，Free、單 instance，Auto-Deploy Off；不要新增 DB／disk 或付費選項。
+4. Advanced → Health Check Path 填 /health；按第 3 節核對環境變數。
+   **不要填 Proxy IP，不需要設定 FORWARDED_ALLOW_IPS，也不用手填 PUBLIC_SCHEME。**
+5. 查看 Workspace Billing／付款方式／用量與通知；確認 Free 與可接受的剩餘額度。
+   Hao 決定開始首次 Demo 後才按 Create Web Service；這一步會公開部署，
+   auto-deploy off 也不會阻止首次部署。套用 Blueprint 亦同，不是 dry run。
+6. Deploys／Events 選本次 deploy 看 Build／Deploy Logs；確認 Python 3.14.10、
+   pip check、服務監聽與 /health 成功。Runtime Logs 在 Logs 頁。
+7. 用實際 HTTPS 網址驗收：首頁、CSS／JS、上傳 examples/valid.csv、匯入 examples/schema.json、
+   轉換及下載等價 expected.json；invalid.csv 應清楚報錯且無部分下載。
+   看瀏覽器 Network 的 HTTPS、CSP／HSTS／no-store、API status，確認 health／Host／Origin 正常。
+   不拿真實敏感資料測試，也不對公開服務壓測。
+8. 修改後重部署：先確認獲准修改已 Push，再到 Manual Deploy → Deploy latest commit。
+   Clear build cache & deploy 僅在快取造成問題時使用；都會消耗 build 用量。
+9. 回滾：Deploys 找保留的成功部署 → Rollback → 核對版本後確認。
+   Free 可回滾版本數有限；沒有成功 deploy 時先 Suspend 排錯。Rollback 後重查 health／設定，
+   不假設所有平台設定一併還原。見 [Rollbacks](https://render.com/docs/rollbacks)。
+10. 暫停／停止：服務 Settings／操作選單 → Suspend Web Service／Suspend，
+    核對服務後確認；關閉 auto-deploy／取消 build 不會停止舊服務。
+    永久刪除用 Delete Web Service／Delete，確認不可逆影響與其他資源費用；不刪 GitHub repo。
+    未觀察實際帳號 UI，若標籤改版，核對對應功能再操作。
+
+## 6. Free 限制與費用
+
+Free 適合此學習 Demo，不適合正式營運：閒置 15 分鐘會休眠，冷啟動約一分鐘，
+重啟／重部署／休眠丟失本機檔案；每 workspace 每月共用 750 Free instance hours。
+另有 outbound bandwidth 與 build pipeline 用量；綁付款方式後超額可能計費。
+pipeline spend limit 不是全部費用的硬上限。定期看 Billing、方案、付款方式、用量及通知，
+不要用自動 ping 規避休眠；不承諾選 Free 就永遠零費用。
+來源：[Free](https://render.com/docs/free)、[FAQ](https://render.com/docs/faq)、
+[Billing](https://render.com/docs/render-dashboard)、[Build pipeline](https://render.com/docs/build-pipeline)。
+
+## 7. 常見失敗與排查
+
+| 現象 | 檢查 |
 | --- | --- |
-| PORT | Render 提供，不自行寫死 |
-| RENDER_EXTERNAL_HOSTNAME | Render 提供，例如 csv-validator-abcd.onrender.com；這只是示例 |
-| CSV_VALIDATOR_ALLOWED_HOSTS | 可省略，launcher 從上述 hostname 建立單一精確 allowlist；自訂網域時明列所有有效主機，逗號分隔 |
-| CSV_VALIDATOR_TRUSTED_PROXY_IPS | **必填、尚待確認**：平台驗證過的實際 ingress IP／CIDR，逗號分隔 |
-| CSV_VALIDATOR_MAX_ACTIVE_REQUESTS | 2，每 worker 活躍 POST API 上限 |
-| CSV_VALIDATOR_UPLOAD_TIMEOUT_SECONDS | 15，只限制合作式上傳接收 |
-| PYTHONDONTWRITEBYTECODE | 1 |
-| PYTHONUNBUFFERED | 1 |
+| Build 找不到檔案／安裝失敗 | root 是否 repository root、commit 是否最新、Build command、Python 與依賴約束；看第一個 build error |
+| Port scan／502 | Start command、PORT、0.0.0.0、啟動日誌；沒有 PORT 會拒絕啟動 |
+| Proxy configuration error | 是否殘留 *／placeholder／非法 CIDR；預設應刪除該選用設定 |
+| Host 400／health 失敗 | RENDER_EXTERNAL_HOSTNAME、實際網址、自訂網域 allowlist，不加 wildcard |
+| Origin 403 | HTTPS 網址、精確 Host／port、RENDER=true 及 launcher；不用開放 CORS 或偽造 X-Forwarded-Proto 修復 |
+| 413 | CSV／Schema／JSON 或 multipart 上限；不在 Demo 任意調高 |
+| 408／503／啟動慢 | 上傳期限／並行已滿／Free 冷啟動；觀察 Logs／Metrics，不假設資料驗證錯誤 |
+| 內部 500／OOM／異常重啟 | 先 Suspend；檢查固定錯誤日誌、記憶體／磁碟／用量，不印上傳原文 |
 
-Host 值不可含 scheme、port、路徑或 wildcard。不猜測 onrender.com 子網域；使用平台實際指派值。
-Render 的 HTTP health check 使用自訂網域（若有），否則使用 onrender.com hostname，
-所以新增自訂網域時必須同步更新 allowlist，不能靠免檢查 health 來繞過。
-見 [health checks](https://render.com/docs/health-checks)。
+[官方排錯](https://render.com/docs/troubleshooting-deploys)、
+[Logs](https://render.com/docs/logging)。沒有取得帳號資料，真實帳號費用與防護設定仍由 Hao 核對。
 
-**Proxy trust 目前仍為發布阻塞：**
-
-- Render 文件列出 Python 預設 FORWARDED_ALLOW_IPS=*；本專案不沿用這個廣泛信任值。
-- launcher 僅接受 CSV_VALIDATOR_TRUSTED_PROXY_IPS 的明確 IP／CIDR，拒絕空值、*、0.0.0.0/0、::/0；
-  把窄化後的值明確傳給 Uvicorn，並覆寫繼承的 FORWARDED_ALLOW_IPS。
-- 缺值時會退出 2，**不開監聽 socket**。render.yaml 使用 sync:false 要求操作人填入，不提供臆測範圍。
-- 必須向 Render 確認實際入口來源、是否有直接／內網繞過路徑、是否覆寫不可信 X-Forwarded-*，
-  以及入口 IP／CIDR 的穩定性和變更方式；不能從某次 client IP 推定整個可信範圍。
-- 若平台無法提供可驗證的窄範圍／等效信任邊界，需集中做安全方案決策，不能改成 * 只為讓表單通過。
-- 本機驗收的 127.0.0.1/32 是本機模擬代理，**不可直接當成 Render ingress 設定**。
-- 無 Origin 的 CLI／直接客戶端仍可呼叫 API，這不表示請求可信。Origin／Fetch Metadata／CORS 都不是認證或限流。
-
-Render 在 load balancer 終止 TLS 並對公開 HTTP redirect；app 必須從受信任代理取得正確 HTTPS scheme，
-才能正確執行同源檢查並發 HSTS。沒有開放 CORS、沒有信任 X-Forwarded-Host 更改 Host。
-來源：[Render 預設環境變數](https://render.com/docs/environment-variables)、
-[Uvicorn proxy trust](https://uvicorn.dev/deployment/)。
-
-## 3. 已完成與尚未完成的安全條件
-
-已完成：
-- 既有 CSV 5 MiB／Schema 128 KiB／JSON 8 MiB，分塊讀取、multipart 總長／檔數限制、Fail Fast。
-- 每 worker 活躍 API 2；Uvicorn 額外以 limit_concurrency=8 限制連線／task，backlog=16。
-  此數字是保守起點，會影響連線重用與可用性，不是每來源速率限制或全域安全保證。
-- keep-alive 5 秒、graceful shutdown 20 秒；兩者**都不是轉換硬性執行期限**。
-- 精確 Host、同源檢查、安全文字渲染、CSP／nosniff／framing／no-store；不顯示 traceback／內部路徑。
-- 每請求私有暫存路徑，不使用客戶檔名寫入，不接受伺服器 output path；一般成功／失敗清理。
-- 不永久保存上傳或結果；沒有資料庫／persistent disk。kill／斷電後不保證執行 finally 或安全抹除。
-- 應用程式不主動記錄 CSV／Schema 原文；Uvicorn access log 關閉，內部錯誤僅固定訊息。
-  平台自己的日誌、留存及備份仍需另外確認，不能由程式宣稱全部不留資料。
-- 首頁明確告知資料傳至伺服器，勿上傳機密／敏感資料。
-
-**公開部署阻塞（目前未解除）：**
-
-| 項目 | 目前證據／欠缺 |
-| --- | --- |
-| Ingress proxy trust | 沒有取得選定服務的已驗證代理範圍與 header 清洗／不可繞過證據 |
-| 匿名公開限流 | Render 有 DDoS／inbound 限制，但公開文件不足以驗證本服務每來源速率／突發額度、大小／header／慢上傳限制；REST API rate limits 不保護本 CSV API |
-| CPU／RSS／磁碟／處理時間 | 尚未確認選定 Free 方案的可用額度、硬性配額／超限行為／單請求 wall-clock 終止機制；軟性 timeout 不能殺死 Python thread |
-| 實際平台驗收 | WSL Linux 不等於 Render image／網路；尚無 Render build、TLS／host／health／瀏覽器／資源量測結果 |
-| 運維與費用 | 日誌權限／留存、監控告警、停用／復原、支出限制尚未在真實帳號設定 |
-
-Render [故障排除](https://render.com/docs/troubleshooting-deploys) 提及 ingress 429；
-這不是本應用已驗證且可配置的公平限流 SLA。不能把 Render [管理 REST API 限流](https://api-docs.render.com/reference/rate-limiting)
-當成上傳服務的防護。若選定方案無必要能力，須調整部署安全方案或保持不公開；本次沒有代為選付費方案。
-
-## 4. Hao 操作順序（先準備，解除阻塞前不建立）
-
-1. 開啟 [Render Dashboard](https://dashboard.render.com/)，自行登入／註冊；不提供密碼或 Token 給 Codex。
-2. 在 Render 連接 GitHub，僅授權需要的 csv-validator repository；確認擁有者為 WJHaoooo。
-3. 檢查本機 Git 與 origin/main；本機 Commit 不會自動同步至 GitHub。
-   確認 GitHub 已包含獲准推送的設定版本，再準備平台表單。
-4. 日後獲准建立時，選 New → Web Service → Git Provider，選 csv-validator、main、Python 3。
-   不是 Static Site。依第 1 節填 Build／Start／Health；Root Directory 留空。
-5. 選 Free、單 instance；不勾選資料庫、磁碟或付費升級。Auto-Deploy 設 Off。
-6. 依第 2 節準備環境變數，確認 Python 3.14.10；proxy trust 未確認就停止，不以 wildcard 替代。
-7. **到此先停。** Create Web Service／Blueprint Apply 會觸發首次公開部署；
-   只有發布阻塞解除、費用與安全條件經 Hao 確認後，才進行該步驟。
-8. 日後部署時，在 Deploys／Events 選對應 deploy 看 Build／Deploy Logs，
-   核對 commit、Python、pip check、啟動成功；Runtime Logs 在 Logs 頁查看。
-   不以打印 body／完整 Schema 排查故障。見 [Render logging](https://render.com/docs/logging)。
-9. 部署後以虛構 examples 驗收 health／三個 API／靜態檔、TLS／安全標頭、Host／Origin、
-   413／503／失敗無下載／暫存清理；本機 smoke 不是遠端驗收。
-   scripts/smoke_web.py **只啟動本機**，不會對 Render 做負載測試。
-10. Workspace → Billing 檢查 Free hours、outbound bandwidth、pipeline minutes、
-    付款方式、預估費用／通知；pipeline spend limit 不能當作全部費用的硬性上限。
-11. 停用時到服務 Settings／服務操作選單找 Suspend Web Service／Suspend，
-    核對服務名稱再確認。這才是停止服務；取消 deploy／關閉 auto-deploy 不會停止現有服務。
-    要永久移除則用服務 Settings 的 Delete Web Service／Delete，核對名稱及不可逆影響；
-    本專案無資料庫／disk，仍需檢查帳號有無其他資源產生費用。不要刪除 GitHub repo。
-12. 回滾：Deploys 選保留中的成功 deploy → Rollback → 核對目標版本再確認。
-    之後重新檢查 health／安全設定；Dashboard rollback 會關閉 auto-deploy，
-    但不能假設平台版本／所有設定都回到過去。沒有成功 deploy 時無法 rollback，先 Suspend 排障。
-    見 [官方 rollback 文件](https://render.com/docs/rollbacks)。
-
-本次只查詢公開文件，沒有登入帳號檢查即時 Dashboard；按鈕名稱若改版，依實際服務的同名功能核對。
-使用 [Blueprint](https://render.com/docs/blueprint-spec) 也必須先審閱資源／費用，不能把 YAML 當成 dry run。
-
-## 5. Free 服務與資料保護注意事項
-
-依 [Render Free 文件](https://render.com/docs/free)／[FAQ](https://render.com/docs/faq)：
-Free 閒置 15 分鐘會休眠，下一次請求冷啟動約一分鐘；重啟／重部署／休眠會丟失本機檔案。
-每 workspace 每月共用 750 Free instance hours；另有 outbound bandwidth／build pipeline 用量。
-已綁付款方式時超額仍可能計費，不能因選 Free 就宣稱零費用；pipeline 可設定 spend limit，
-其他費用項目仍需 Billing 確認。不要用自動 ping 規避休眠或製造額外流量。
-Free 不適合作為本專案已完成防護的正式 production；不建立 persistent disk 來保存使用者上傳。
-
-參見 [Dashboard/Billing](https://render.com/docs/render-dashboard)、
-[Build pipeline 費用限制](https://render.com/docs/build-pipeline)。
-
-## 6. 本機重現與本次證據
+## 8. 本機可重現驗證
 
 Windows PowerShell：
-
 ~~~powershell
 Set-Location C:\Hao\csv-validator
 .\.venv\Scripts\python.exe -m pip install -c requirements/render.txt -e ".[web,dev]"
 .\.venv\Scripts\python.exe -m pytest -q
-.\.venv\Scripts\python.exe -m pip check
 .\.venv\Scripts\python.exe -m csv_validator.cli --help
+.\.venv\Scripts\python.exe -m pip check
 .\.venv\Scripts\python.exe scripts/smoke_web.py
-.\.venv\Scripts\python.exe scripts/audit_dependencies.py
+.\.venv\Scripts\python.exe scripts/smoke_web.py --trusted-proxy
 ~~~
 
-Linux 隔離副本（先備妥 Python 3.14.10 與 venv，不修改系統 Python）：
+本機 smoke 只使用 loopback 與虛構資料，模擬 Render 的部署環境；
+預設不提供 Proxy IP，測試缺少／偽造轉送標頭；選用模式只用本機可信代理，不是 Render IP 建議。
+兩種模式都會停止本機服務並檢查暫存清理，不呼叫 Render。
 
+Linux 隔離副本，先備妥 Python 3.14.10：
 ~~~bash
 python3.14 -m venv .venv-render
 source .venv-render/bin/activate
 bash scripts/render-build.sh
 python -m csv_validator.cli --help
 python scripts/smoke_web.py
+python scripts/smoke_web.py --trusted-proxy
 python scripts/audit_dependencies.py
 ~~~
 
-測試使用另一個 venv，才不會把 dev 依賴混進 production：
-
-~~~bash
-python3.14 -m venv .venv-test
-source .venv-test/bin/activate
-python -m pip install pip==26.2.1
-python -m pip install --build-constraint requirements/build.txt -c requirements/render.txt ".[web,dev]" pytest==9.2.0 httpx2==2.16.0
-python -m pytest -q
-python -m pip check
-~~~
-
-本次執行結果：
-- W3-A baseline：356 passed，8.33 秒；Commit 496ad25。
-- Windows／Python 3.14.8：374 passed，8.78 秒；pip check／CLI help 通過。
-- WSL Ubuntu／x86_64／由 uv 0.13.7 取得的獨立 CPython 3.14.10：373 passed、1 skipped，3.41 秒。
-  skip 為 Windows 大小寫路徑專屬測試，不是功能失敗。
-- 實際 Linux production build 安裝非 editable wheel，確認無 pytest／httpx2，
-  從 site-packages 載入，靜態資源隨套件安裝正確。
-- Windows／Linux production 的本機 smoke 均 14 項通過：
-  health、HTML／CSS／兩個 JS、三個 API、CLI bytes 等價、非法資料無下載、
-  Host／Origin、multipart、安全標頭、暫存清理與停止／日誌。
-- [Linux production OSV 快照](dependency-audit-render.json)：17 個 distributions，0 匹配；
-  僅傳套件名稱／版本，不傳使用者資料。build backend 84.2.1 已於 W3-A 另查。
-  不代表通過滲透測試、沒有未知漏洞，或其他日期／平台皆安全。
-- Render 實際 Build／Deploy／TLS／代理來源／資源及安全限流：**尚未驗證**。
-- render.yaml 以隔離工具對照 [Render 官方 JSON Schema](https://render.com/schema/render.yaml.json) 驗證結構通過；
-  PyYAML／jsonschema 僅在隔離驗證工具環境，未加入專案／production 依賴。
-  未用 Render API／Dashboard 驗證、建立或套用 Blueprint。
-
-目前完成的是可重現的部署準備。是否能正式建立公開 Web Service，仍取決於第 3 節阻塞清單。
-
-## 7. W006 結案重驗（2026-11-11）
-
-- 工作目錄為原 W3-B 13 個檔案，未發現不相關變更。
-- Windows Python 3.14.8：374 passed（13.94 秒）；Linux Python 3.14.10：373 passed、1 skipped（4.90 秒）。
-  skip 仍為 Windows 路徑大小寫測試。兩個環境 smoke 均 14 項通過，pip check 通過，程序已停止。
-- 前端規則測試通過；Blueprint 再次對照官方 JSON Schema 驗證通過。
-- 重新查詢 OSV：Windows 26、Linux production 17 個 distributions，均 0 匹配；不代表零漏洞。
-- 46 個追蹤／候選檔案與 67 個既有歷史 blobs 的常見秘密特徵掃描無匹配，
-  沒有 Agent／雲端授權設定、環境檔、快取或手動資料進入追蹤候選範圍；模式掃描不取代人工審查。
-- 本機提交名稱為 chore: prepare render deployment；實際 Commit／Push 狀態見 Git。
-- 沒有登入 Render、建立服務或降低安全設定。第 3 節公開部署阻塞全部保留。
-
-### 設定 TRUSTED_PROXY_IPS 前需要的可信證據
-
-以下須來自 Render 官方文件、對應服務的可驗證設定或官方支援確認，並保留確認日期與適用範圍：
-
-1. 該服務／region／方案實際 ingress 到 app 的來源 IP 或 CIDR，包含健康檢查路徑；
-   確認範圍是可信入口，不是一般共享內網或其他工作負載可自行連入的來源。
-2. 公開 HTTP／HTTPS、其他網路入口與內部存取的路由邊界，是否可能繞過受控代理直接連入 app。
-3. 對客戶端自帶 X-Forwarded-Proto／X-Forwarded-For 的覆寫或安全鏈結規則，
-   TLS 終止方式與傳入 app 的 scheme，不能讓客戶端任意宣稱協定／來源。
-4. 來源範圍的穩定性、變更通知與更新方式，及重新驗證 Host／Origin／HSTS／偽造標頭的紀錄。
-
-Outbound IP 清單、網域 DNS 解析結果、單次觀察到的 IP、隨機私有網段，以及本機 127.0.0.1，
-都不能單獨作為 Render ingress 信任證據。程式只能檢查設定格式，不能證明填入的 IP 值值得信任。
-若拿不到上述證據，保持未設定／停止啟動，集中討論等效信任邊界，不改用 wildcard。
+另建 .venv-test 安裝 .[web,dev] 後跑 pytest，不將 dev 混入 production。
+本機結果與日期見 README；實際 Render 建置、TLS redirect、網域／health、資源、日誌與帳務
+都必須在 Hao 首次部署後驗證。本次沒有宣稱已在 Render 成功上線。

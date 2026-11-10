@@ -1,5 +1,9 @@
 # Web v1 安全審查與部署前清單（W3-A）
 
+**現行更新（W007，2026-11-11）：** 本文件保留早期正式營運審查；低流量公開 Demo 的當前設定見 [Render 指南](RENDER.md)。
+可信 Proxy IP 已非必填：缺值時不信任轉送標頭，以直接來源運作；Render 公開 HTTPS 由部署設定判斷。
+Hao 可開始首次 Free Demo 驗證，以下尚未完成的平台限流／硬資源控制屬明列的殘餘風險，不宣稱已解決。
+
 審查日期：2026-11-09。對象：免登入、匿名上傳 CSV／Schema、下載 JSON 的 Web v1。
 本階段未部署、未建立雲端資源、未 Push；W3-B 需要另外驗收。
 
@@ -22,7 +26,7 @@
 | DOM XSS | 高影響，未確認注入漏洞 | textContent／createElement，未發現 HTML 字串 sink | 保留安全文字渲染，新增自站 CSP、nosniff、禁止 framing；Script 欄名／值測試 |
 | Host／跨來源請求濫用 | 中 | W2 未限制 Host／Origin；匿名服務無帳號權限 | 精確 Host allowlist、API 同源 Origin／Fetch Metadata；無 CORS。不構成認證或速率限制 |
 | 路徑／traceback／資料日誌洩漏 | 中 | Web 錯誤適配、固定日誌，不輸出 exception text | 故障注入測試；debug=False，停用 docs/OpenAPI；回應序列化例外亦經安全邊界處理，非法 Unicode Schema 回 422；平台仍須禁用 body／query 記錄 |
-| 資料快取／傳輸截取 | 高影響，平台待定 | API／HTML no-store；HTTPS scope 才回 HSTS | TLS／代理 trust、強制 HTTPS、日誌與備份政策待平台；不以 localhost 測試聲稱完成 |
+| 資料快取／傳輸截取 | 高影響，平台待定 | API／HTML no-store；HTTPS scope 或 Render 公開 HTTPS 設定回 HSTS | TLS／代理 trust、強制 HTTPS、日誌與備份政策待平台；不以 localhost 測試聲稱完成 |
 | 強制中止後暫存殘留 | 中 | finally 不能保證 kill／斷電後執行 | 專屬暫存目錄、磁碟配額、停機清理政策仍須平台提供 |
 
 沒有登入／cookies／帳號異動，所以同源檢查主要降低瀏覽器跨站濫用，不是完整 CSRF 認證。
@@ -77,13 +81,13 @@ node tests/frontend_rules.mjs
 | CSV_VALIDATOR_UPLOAD_TIMEOUT_SECONDS | 15 | 大於 0、最多 60 秒，僅上傳接收 |
 
 錯誤設定阻止啟動。正式域名必須明列；Origin 比對包含 scheme／port。
-TLS 終止於代理時，ASGI scheme 須由受信任代理正確傳入，不得信任任意來源的 Forwarded 標頭。
+TLS 終止於代理時，可經明確可信代理設定 scheme；W007 的 Render 預設則只以部署設定固定公開 HTTPS 做 Origin／HSTS，保留內部 scheme／直接來源，不信任任意 Forwarded 標頭。
 不啟用 wildcard CORS。
 
 安全標頭：self-only script/style/connect CSP，禁止 object/base/frame，
 X-Frame-Options DENY、nosniff、Referrer-Policy no-referrer、
 Permissions-Policy 禁用 camera/microphone/geolocation、CORP same-origin。
-HTTPS scope 回 HSTS max-age=86400，未啟用 preload／includeSubDomains。
+HTTPS scope 或已配置公開 HTTPS 時回 HSTS max-age=86400，未啟用 preload／includeSubDomains。
 
 ## 依賴公告審查
 
@@ -113,9 +117,9 @@ httpx2 2.0.0 命中 GHSA-8xx6-hgc6-gc2m、h4x7-gw46-3wm6、pf96-p4fj-6566。
 這些是原允許範圍的安全問題，不代表目前 Web 執行路徑皆可利用。
 修復版本、公告摘要與查詢時點記於 dependency-audit.json 的 minimum_version_review。
 
-## W3-B 公開發布阻塞清單
+## W3-B 正式營運待辦（歷史審查）
 
-**目前不建議直接公開服務**；以下尚未實作或實測：
+**正式營運仍不建議**；以下尚未實作或實測。W007 已依低流量 Demo 範圍更新首次部署準則，詳見開頭與 Render 指南：
 
 - [ ] 入口／代理限制 body（容納合法 convert multipart）、HTTP headers、連線數、
   上傳／閒置／總請求期限，不能先將任意大 body 緩存至無界磁碟。
@@ -148,5 +152,5 @@ W3-A 已提交 496ad25。部署目標與操作步驟見 [Render 指南](RENDER.m
 
 原清單中的「Linux 尚未測試」已補做；Render／Python 3.12／其他平台仍未驗證。
 平台限流、硬性 CPU／RSS／處理時間與磁碟配額、代理可信範圍、營運／費用事項仍未解除。
-launcher 缺乏已驗證代理設定時會停止，不沿用 Render 預設的 FORWARDED_ALLOW_IPS=*。
+W3-B 當時的 launcher 缺值會停止；此要求已由 W007 取代：缺值改為關閉 proxy headers，不沿用 Render 預設的 FORWARDED_ALLOW_IPS=*。
 沒有新增產品資料處理規則，也沒有部署、Push 或雲端資源。

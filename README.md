@@ -505,7 +505,7 @@ csv-validator/
 
 ## Security & Release Review — W3-A
 
-匿名公開服務目前**尚不可直接發布**。CSV／Schema 會傳至伺服器處理，請勿上傳機密或敏感資料。
+此節記錄 W3-A 的正式營運安全審查；W007 低流量 Demo 的現行部署方式見下方及 Render 指南。CSV／Schema 會傳至伺服器處理，請勿上傳機密或敏感資料。
 
 完整威脅模型、已完成防護、設定、依賴掃描、停用與日誌政策及 W3-B 阻塞清單：
 [Security / Deployment Checklist](docs/SECURITY.md)。
@@ -528,13 +528,13 @@ csv-validator/
 
 ## Render Deployment Preparation — W3-B
 
-[Hao 的 Render 操作指南與發布阻塞清單](docs/RENDER.md)。
+[Hao 的 Render 操作指南與 Demo 風險](docs/RENDER.md)。
 
 - Python 3.14.10 固定於 .python-version；render.yaml 僅為 Free／單 instance／auto-deploy off 草稿。
 - Build：bash scripts/render-build.sh；Start：python scripts/start_render.py；Health：/health。
 - 以 requirements/render.txt／build.txt 固定 Web runtime 與建置版本；production 不裝 dev extra。
-- launcher 使用 0.0.0.0／PORT／單 worker，要求已驗證的 CSV_VALIDATOR_TRUSTED_PROXY_IPS；
-  不繼承 Render 的 FORWARDED_ALLOW_IPS=*。缺值即停止，不以 wildcard 繞過。
+- launcher 使用 0.0.0.0／PORT／單 worker；W007 起未設定 CSV_VALIDATOR_TRUSTED_PROXY_IPS 時，
+  完全停用轉送標頭解析並使用直接來源，不繼承 FORWARDED_ALLOW_IPS=*，不再因缺值拒絕啟動。
 - Windows Python 3.14.8：374 passed；WSL Linux Python 3.14.10：373 passed、1 Windows-only skipped。
 - 兩環境的本機 HTTP smoke 均 14 項通過；python scripts/smoke_web.py 可重現，會自行停止本機程序。
 - Linux production 新建環境／非 editable wheel：pip check 通過，未裝 pytest／httpx2；
@@ -542,5 +542,22 @@ csv-validator/
 - WSL 不是 Render 實際 image。Render 建置、代理信任、限流、硬性資源限制及費用設定仍未驗收。
 - W3-A 已提交 496ad25；W3-B 結案與推送狀態以 Git 歷史為準。沒有建立 Web Service、付費資源或公開部署。
 
-**準備檔案不等於准許公開。** 未解除指南中的阻塞前，不按 Create Web Service／Apply Blueprint；
-auto-deploy off 也不能阻止首次公開部署。
+W007 已依低流量、非正式營運 Demo 定位更新準則；Hao 可開始首次 Free 部署驗證，
+不宣稱已達正式營運防護。Create Web Service／Apply Blueprint 都會公開服務，auto-deploy off 不阻止首次部署。
+
+## W007 — Safe Render Startup
+
+- 不設定 Proxy IP 即可啟動；使用直接連線來源，完全忽略不可信轉送標頭。
+- RENDER=true 且平台 hostname 合法時，由部署設定固定公開 HTTPS 做 Origin／HSTS 判斷，
+  不修改 ASGI 內部 scheme／client，不相信客戶端宣告。
+- 精確 Host／Origin、安全標頭、並行、CSV／Schema／JSON 大小與清理規則全部保留。
+- 未來若選用可信代理，只允許有證據的窄來源；拒絕 wildcard 或合併後涵蓋全網的 CIDR 清單。
+- Windows Python 3.14.8：382 passed（6.30 秒）；全新 WSL Linux Python 3.14.10：
+  381 passed、1 Windows-only skipped（3.47 秒）。
+- 兩環境預設無可信代理的 HTTP smoke 各 16 項通過，明確本機代理模式各 14 項通過；
+  包含正常／錯誤 CSV、三個 API、靜態檔、安全標頭、CLI 等價、偽造標頭、來源保持及暫存清理。
+- Linux production 實際 Build／非 editable wheel／pip check／CLI help 通過，未裝 dev extra。
+- 程式沒有可靠的每位訪客 IP 限流、硬性 CPU／RSS／轉換期限或抗 DoS 保證；
+  直接來源可能是平台代理。僅建議非敏感、低流量 Demo，異常時 Suspend。
+- Render 真實建置、TLS、網域、用量、帳務及瀏覽器操作仍待 Hao 首次部署後驗收。
+- 本次沒有建立 Render 服務、付費資源或公開部署。完整步驟：[Render 指南](docs/RENDER.md)。

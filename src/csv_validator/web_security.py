@@ -24,8 +24,12 @@ class SecuritySettings:
     allowed_hosts: tuple[str, ...] = ("localhost", "127.0.0.1", "::1")
     max_active_requests: int = 2
     upload_timeout_seconds: float = 15.0
+    # Canonical external scheme for TLS-terminating platforms; never changes peer IP.
+    public_scheme: str | None = None
 
     def __post_init__(self):
+        if self.public_scheme not in (None, "https"):
+            raise ValueError("Public scheme must be https or unset.")
         if not self.allowed_hosts or any(
             not host or "*" in host or "/" in host or "@" in host or host.strip() != host
             for host in self.allowed_hosts
@@ -43,6 +47,7 @@ class SecuritySettings:
             allowed_hosts=tuple(host.strip().lower() for host in hosts.split(",")),
             max_active_requests=int(os.environ.get("CSV_VALIDATOR_MAX_ACTIVE_REQUESTS", "2")),
             upload_timeout_seconds=float(os.environ.get("CSV_VALIDATOR_UPLOAD_TIMEOUT_SECONDS", "15")),
+            public_scheme=os.environ.get("CSV_VALIDATOR_PUBLIC_SCHEME") or None,
         )
 
 
@@ -95,7 +100,7 @@ class SecurityBoundary:
                     b"cross-origin-resource-policy": b"same-origin",
                 })
                 headers[b"cache-control"] = b"no-cache" if scope["path"].startswith("/static/") else b"no-store"
-                if scope.get("scheme") == "https":
+                if (self.settings.public_scheme or scope.get("scheme")) == "https":
                     headers[b"strict-transport-security"] = b"max-age=86400"
                 message = {**message, "headers": list(headers.items())}
             await send(message)
@@ -113,7 +118,7 @@ class SecurityBoundary:
             host = hosts[0].decode("ascii") if len(hosts) == 1 else ""
         except UnicodeDecodeError:
             host = ""
-        expected = _origin(scope.get("scheme", "http") + "://" + host)
+        expected = _origin((self.settings.public_scheme or scope.get("scheme", "http")) + "://" + host)
         if expected is None or expected[1] not in self.settings.allowed_hosts:
             return await reject(400, "INVALID_HOST", "Host is not allowed.")
 

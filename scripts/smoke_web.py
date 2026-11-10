@@ -3,6 +3,7 @@
 Starts a short-lived local process, uses public examples, then stops it.
 No Render API calls, cloud resources, uploads to remote hosts or credentials.
 """
+import argparse
 import json
 import os
 from pathlib import Path
@@ -27,7 +28,7 @@ def multipart(parts):
     return body + f"--{boundary}--\r\n".encode(), f"multipart/form-data; boundary={boundary}"
 
 
-def main():
+def main(*, trusted_proxy=False):
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         port = sock.getsockname()[1]
@@ -38,9 +39,13 @@ def main():
         uploads = temporary / "uploads"
         uploads.mkdir()
         env = {**os.environ, "PORT": str(port),
-               "CSV_VALIDATOR_ALLOWED_HOSTS": "local-smoke.onrender.com",
-               "CSV_VALIDATOR_TRUSTED_PROXY_IPS": "127.0.0.1/32",
+               "RENDER": "true", "RENDER_EXTERNAL_HOSTNAME": "local-smoke.onrender.com",
+               "FORWARDED_ALLOW_IPS": "*",
                "TMPDIR": str(uploads), "TEMP": str(uploads), "TMP": str(uploads)}
+        env.pop("CSV_VALIDATOR_ALLOWED_HOSTS", None)
+        env.pop("CSV_VALIDATOR_TRUSTED_PROXY_IPS", None)
+        if trusted_proxy:
+            env["CSV_VALIDATOR_TRUSTED_PROXY_IPS"] = "127.0.0.1/32"
         process = subprocess.Popen(
             [sys.executable, str(ROOT / "scripts/start_render.py")], cwd=ROOT, env=env,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -48,7 +53,7 @@ def main():
         )
 
         def request(path, data=None, extra=None):
-            headers = {"Host": "local-smoke.onrender.com", "X-Forwarded-Proto": "https"}
+            headers = {"Host": "local-smoke.onrender.com"}
             headers.update(extra or {})
             try:
                 response = urlopen(Request(base + path, data=data, headers=headers), timeout=5)
@@ -117,6 +122,21 @@ def main():
                 {"Content-Type": content_type, "Origin": "https://untrusted.invalid"})
             assert status == 403 and json.loads(body)["error"]["code"] == "ORIGIN_NOT_ALLOWED"
             checks.append("cross_origin")
+            if not trusted_proxy:
+                status, _, body = request("/api/csv/inspect", payload, {
+                    "Content-Type": content_type, "Origin": "https://local-smoke.onrender.com",
+                    "X-Forwarded-For": "203.0.113.66", "X-Forwarded-Proto": "http",
+                    "X-Forwarded-Host": "attacker.invalid",
+                    "Forwarded": "for=127.0.0.1;proto=ftp;host=attacker.invalid",
+                })
+                assert status == 200 and json.loads(body)["columns"]
+                checks.append("forwarded_headers_ignored")
+                status, _, body = request("/api/csv/inspect", payload, {
+                    "Content-Type": content_type, "Origin": "http://local-smoke.onrender.com",
+                    "X-Forwarded-Proto": "http",
+                })
+                assert status == 403 and json.loads(body)["error"]["code"] == "ORIGIN_NOT_ALLOWED"
+                checks.append("public_https_origin_enforced")
             status, _, body = request("/health", extra={"Host": "untrusted.invalid"})
             assert status == 400 and json.loads(body)["error"]["code"] == "INVALID_HOST"
             checks.append("host")
@@ -137,8 +157,10 @@ def main():
         assert b"Traceback" not in logs and b"Example Gamma" not in logs
         checks.append("safe_logs_and_shutdown")
     print(json.dumps({"python": sys.version.split()[0], "platform": sys.platform,
-                      "status": "passed", "checks": checks}, indent=2))
+                      "status": "passed", "proxy_mode": "explicit" if trusted_proxy else "direct-peer", "checks": checks}, indent=2))
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--trusted-proxy", action="store_true", help="Also test explicit local proxy mode.")
+    main(trusted_proxy=parser.parse_args().trusted_proxy)
