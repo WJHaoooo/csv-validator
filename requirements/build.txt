@@ -1,0 +1,2 @@
+# Isolated build backend; pip is pinned in scripts/render-build.sh.
+setuptools==84.2.1

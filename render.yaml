@@ -1,0 +1,26 @@
+# Preparation only: do not apply until docs/RENDER.md release blockers are resolved.
+# Applying a Blueprint starts a public service even when auto-deploys are off.
+services:
+  - type: web
+    name: csv-validator
+    runtime: python
+    plan: free
+    branch: main
+    numInstances: 1
+    autoDeployTrigger: "off"
+    buildCommand: bash scripts/render-build.sh
+    startCommand: python scripts/start_render.py
+    healthCheckPath: /health
+    envVars:
+      - key: CSV_VALIDATOR_MAX_ACTIVE_REQUESTS
+        value: "2"
+      - key: CSV_VALIDATOR_UPLOAD_TIMEOUT_SECONDS
+        value: "15"
+      - key: CSV_VALIDATOR_TRUSTED_PROXY_IPS
+        sync: false
+      - key: PYTHONDONTWRITEBYTECODE
+        value: "1"
+      - key: PYTHONUNBUFFERED
+        value: "1"
+# RENDER_EXTERNAL_HOSTNAME and PORT are supplied by Render.
+# Custom domains: set CSV_VALIDATOR_ALLOWED_HOSTS to every exact active hostname.

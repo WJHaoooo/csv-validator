@@ -37,8 +37,8 @@ python -m venv .venv
 以下指令直接使用 venv Python，不需啟用腳本或變更 PowerShell Execution Policy。
 若出現 `No module named csv_validator` 或 `pytest`，確認在專案根目錄，並使用同一個 venv Python 重跑 editable install；不要靠 PYTHONPATH 掩蓋安裝問題。
 
-已驗證環境為 Windows / Python 3.14.8；Python 3.12 及其他版本尚未實測。
-macOS/Linux 可使用 `python3 -m venv .venv` 與 `.venv/bin/python`，但本次未在這些平台驗證。
+已驗證 Windows / Python 3.14.8 與 WSL Ubuntu / Python 3.14.10；Python 3.12、macOS 與 Render 實際環境尚未驗證。
+Linux 可使用 python3 -m venv .venv 與 .venv/bin/python；詳細隔離驗證步驟見 Render 指南。
 
 ## Usage
 
@@ -448,8 +448,8 @@ CLI MVP 歷史驗收（2026-11-07，Web 開發前）：在獨立暫存專案與�
 - 沿用 csv 欄位長度限制；strict 模式不保證識別所有非典型 CSV 變體。
 - 預設拒絕覆寫既有輸出，目前沒有覆寫選項；父目錄必須已存在。
 - 中斷或清理權限問題可能殘留暫存檔；不保證斷電後目錄 metadata 持久性。
-- 非 Windows 發布依賴 hard link，目前未在非 Windows 平台實測。
-- Python 3.12 及其他版本尚未實測。
+- 非 Windows 發布依賴 hard link；已在 WSL Linux 的完整測試驗證，Render 實際環境仍待確認。
+- Python 3.12 及上述 Windows／WSL 驗證版本以外的版本尚未實測。
 - Web 已提供 W2 規則編輯與轉換；尚無登入、資料庫、Docker、批次轉換或公開部署。
 
 ## Project Layout
@@ -524,4 +524,23 @@ csv-validator/
 - 本機 Uvicorn 真實 HTTP 6 項檢查通過（health、精確 JSON、跨來源拒絕、multipart 錯誤、HTML、JS），驗收程序已停止。
 - [依賴掃描快照](docs/dependency-audit.json)：26 個已安裝 distributions、OSV 0 匹配（另記原建置／測試下限公告）；
   不代表未來或其他環境沒有漏洞。可執行 python scripts/audit_dependencies.py 重新掃描。
-- W2 Commit：724e98f；W3-A 保持未提交。沒有 Push、雲端資源或公開部署。
+- W2 Commit：724e98f；W3-A 已於 W3-B 前提交為 496ad25。沒有 Push、雲端資源或公開部署。
+
+## Render Deployment Preparation — W3-B
+
+[Hao 的 Render 操作指南與發布阻塞清單](docs/RENDER.md)。
+
+- Python 3.14.10 固定於 .python-version；render.yaml 僅為 Free／單 instance／auto-deploy off 草稿。
+- Build：bash scripts/render-build.sh；Start：python scripts/start_render.py；Health：/health。
+- 以 requirements/render.txt／build.txt 固定 Web runtime 與建置版本；production 不裝 dev extra。
+- launcher 使用 0.0.0.0／PORT／單 worker，要求已驗證的 CSV_VALIDATOR_TRUSTED_PROXY_IPS；
+  不繼承 Render 的 FORWARDED_ALLOW_IPS=*。缺值即停止，不以 wildcard 繞過。
+- Windows Python 3.14.8：374 passed；WSL Linux Python 3.14.10：373 passed、1 Windows-only skipped。
+- 兩環境的本機 HTTP smoke 均 14 項通過；python scripts/smoke_web.py 可重現，會自行停止本機程序。
+- Linux production 新建環境／非 editable wheel：pip check 通過，未裝 pytest／httpx2；
+  [OSV 掃描](docs/dependency-audit-render.json) 17 distributions、0 匹配。
+- WSL 不是 Render 實際 image。Render 建置、代理信任、限流、硬性資源限制及費用設定仍未驗收。
+- W3-A 已提交 496ad25；W3-B 結案與推送狀態以 Git 歷史為準。沒有建立 Web Service、付費資源或公開部署。
+
+**準備檔案不等於准許公開。** 未解除指南中的阻塞前，不按 Create Web Service／Apply Blueprint；
+auto-deploy off 也不能阻止首次公開部署。
