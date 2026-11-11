@@ -203,3 +203,21 @@ python scripts/audit_dependencies.py
 本機結果與日期見 [README](../README.md)。Hao 已完成公開環境八項功能驗收；
 本次僅獨立 GET 確認公開首頁及 /health 為 200，沒有重跑公開上傳、查閱私有 Logs 或變更帳務。
 未來每次改版仍須核對實際 Render 建置、TLS、Host／Origin、用量、日誌與費用。
+
+## W009 結案版本與可選 Manual Deploy
+
+正式發行為 v0.2.0，package／FastAPI metadata 為 0.2.0。
+最後由 Hao 提供／公開驗收的 Render Commit 為 9436f21，當時 metadata 為 0.1.0；
+未登入 Render，不能從 /health 獨立查得 Deploy SHA，請以 Dashboard → Deploys 顯示為準。
+
+Auto-Deploy Off。本次最終版與 9436f21 僅差 README／文件及兩處版本 metadata，
+沒有變更 CSV 規則、API 契約、執行依賴、啟動或部署架構，所以不必為結案重部署；
+目前服務不應停止。
+
+若 Hao 希望線上 metadata 也為 0.2.0：
+1. Dashboard 選現有 csv-validator Web Service，不建立新服務。
+2. Deploys 核對目前 SHA；Manual Deploy → Deploy latest commit，確認 main 的 v0.2.0 發布 Commit。
+3. 保持既有 Free、Auto-Deploy Off、環境變數與方案，正常部署會消耗 build 用量。
+4. 查看 Build／Deploy Logs、/health 與基本 Web 流程；失敗時依前述 rollback／Suspend 流程處理。
+
+此操作為選用，由 Hao 自行決定；本次未執行，也未變更方案、環境變數或費用設定。

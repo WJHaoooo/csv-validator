@@ -1,9 +1,4 @@
-# v0.2.0 GitHub Release Notes — Draft
-
-**狀態：文字草稿，尚未建立 Tag 或 GitHub Release。**
-2026-11-11 查核本機／遠端無 Git Tag，GitHub 公開 Releases 清單為空。
-v0.1.0 是 CLI MVP 功能里程碑，不宣稱曾實際建立發行。
-程式碼部署版本為 9436f21；本次文件 Commit 不更動已部署的程式。
+# v0.2.0 Release Notes
 
 ## Release Title
 
@@ -54,6 +49,9 @@ Hao 已回報完成八項公開驗收，包含手機與 Logs；本次獨立確�
 
 ## Validation
 
+- W009 將 Python package／FastAPI metadata 統一為 0.2.0；API 契約、依賴與驗證規則不變。
+- W009 完整 pytest：382 passed（9.53 秒），CLI help／pip check／範例與本機 HTTP smoke 通過。
+
 - 2026-11-11 重新執行完整 Windows pytest：382 passed，Python 3.14.8。
 - CLI help、pip check、範例 2 項測試、兩模式本機 HTTP smoke、前端規則通過。
 - 全新 clone／venv 實際重跑 README 安裝／操作：382 passed（12.36 秒），thread warning 視為錯誤仍通過；CLI-only 不安裝 FastAPI。
@@ -61,14 +59,13 @@ Hao 已回報完成八項公開驗收，包含手機與 Logs；本次獨立確�
 - W007 Linux Python 3.14.10 曾驗證 381 passed／1 Windows-only skipped；不是本次 Linux 重跑結果。
 - 沒有新增產品功能、修改核心規則或部署。
 
-## Before Publishing — Hao Confirmation
 
-- [ ] 審閱 README、API、此草稿與目前本機文件 Commit。
-- [ ] 決定版本 metadata：Python package／ASGI app 仍為 0.1.0；本次只改文件。
-  若要與 GitHub v0.2.0 完全一致，另行授權小幅版本 metadata 更新、重測、Commit，再選定最終目標。
-  本次沒有發布 PyPI 套件。
-- [ ] 明確授權正常 Push 最新文件／版本 Commit，確認 GitHub 內容及實際 deploy 設定。
-- [ ] 再核對無重複的 v0.2.0 Tag／Release，包含帳號內未公開 Draft（本次公開 API 無法查閱），確認 Tag 指向獲准的最終 Commit。
-- [ ] 另行授權建立／Push Tag、建立 GitHub Release；不覆寫 Tag、不 force push、不改歷史。
+## Release & Maintenance
 
-此檔不是已儲存在 GitHub 的 Draft Release，待 Hao 確認後才建立。沒有 Full Changelog 對不存在的 v0.1.0 Tag。
+- [GitHub Release v0.2.0](https://github.com/WJHaoooo/csv-validator/releases/tag/v0.2.0)
+- [Project Closure](PROJECT_CLOSURE.md)
+- Status: Completed — Maintenance Only
+- v0.1.0 僅為 CLI MVP 功能里程碑，未建立該 Tag／Release；本次沒有發佈 PyPI 套件。
+- Render 最後由 Hao 確認的部署 Commit 為 9436f21；Auto-Deploy Off，本次不強制重新部署。
+  與發布版僅差文件及版本 metadata，功能相同。平台實際 Deploy SHA 請以 Dashboard 為準。
+- 僅在 Hao 主動要求時處理 Bug、必要安全更新或主機問題，不再啟動新功能開發。

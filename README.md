@@ -2,6 +2,8 @@
 
 **Schema-driven CSV validation and JSON conversion tool built with Python and FastAPI.**
 
+**Status: Completed — Maintenance Only** · [v0.2.0 Release](https://github.com/WJHaoooo/csv-validator/releases/tag/v0.2.0)
+
 上傳 CSV，選擇保留欄位並設定型別與必填規則；全部資料通過檢查後，預覽並下載 JSON。
 適合展示「資料匯入前先驗證、再轉換」的 Backend 流程，CLI 與 Web API 共用同一套 Python 驗證核心。
 
@@ -243,21 +245,25 @@ tests/                  # 單元、整合、端到端與安全回歸
 examples/               # 虛構成功／失敗資料與 expected JSON
 scripts/                # Render build/start、本機 smoke、依賴公告查詢
 requirements/           # 正式環境 runtime／build 約束
-docs/                   # API、部署、安全、Release 草稿、面試準備
+docs/                   # API、部署、安全、Release／結案、面試準備
 ~~~
 
 - [API Contract](docs/API.md)
 - [Render Deployment & Operations](docs/RENDER.md)
 - [Security Review](docs/SECURITY.md)
-- [v0.2.0 Release Notes Draft](docs/RELEASE_NOTES_v0.2.0.md)
+- [v0.2.0 Release Notes](docs/RELEASE_NOTES_v0.2.0.md)
 - [三分鐘面試介紹與 AI 協作說明](docs/INTERVIEW.md)
 
 ## Version Status
 
-公開驗收的程式碼為 `9436f21`；v0.2.0 是 Web v1 + Public Demo 的**待確認發行版本**。
-查核時無既有 Git Tag／公開 GitHub Release；帳號內未公開的 Draft 未查閱。
-v0.1.0 僅代表 CLI MVP 規劃里程碑，不宣稱曾建立 Release。
-Python package／ASGI metadata 目前仍為 0.1.0，本次僅更新文件；是否在正式標記前對齊為 0.2.0，
-列於 Release 草稿待 Hao 確認。尚未發布 PyPI 套件。
+正式 Web v1 版本為 **v0.2.0**，Python package 與 FastAPI metadata 統一為 **0.2.0**。
+v0.1.0 僅為 CLI MVP 功能里程碑，未建立該 Tag／Release；沒有發布 PyPI 套件。
+
+專案已完成原訂範圍，進入 **Completed — Maintenance Only**；只在 Hao 主動要求時處理
+Bug、必要安全更新或主機問題，不新增功能或 Roadmap，也未將 GitHub repository 設為唯讀。
+[專案結案紀錄](docs/PROJECT_CLOSURE.md)
+
+Render 最後由 Hao 確認的部署為 9436f21；Auto-Deploy Off，線上可能仍顯示舊的 0.1.0 metadata。
+本次僅文件／metadata 不必強制重部署；可選 Manual Deploy 由 Hao 決定，見 [運維指南](docs/RENDER.md)。
 
 本專案使用 AI／Codex 協助開發，需求、規則與驗收由 Hao 參與確認；面試資料明列協作方式與設計取捨。

@@ -279,7 +279,7 @@ async def _convert_csv_upload(request: Request) -> Response:
 def create_app(settings: SecuritySettings | None = None) -> FastAPI:
     """Create an explicitly configured worker; production docs stay disabled."""
     application = FastAPI(
-        title="CSV Validator Web", version="0.1.0", debug=False,
+        title="CSV Validator Web", version="0.2.0", debug=False,
         docs_url=None, redoc_url=None, openapi_url=None,
     )
     application.state.security = settings or SecuritySettings.from_environment()
