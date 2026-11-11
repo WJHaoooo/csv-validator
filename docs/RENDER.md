@@ -1,8 +1,9 @@
-# Hao 的 Render 公開 Demo 部署指南（W007）
+# Render Web v1 部署與運維指南
 
 更新：2026-11-11。對象為低流量、非正式營運、學習／求職展示的匿名公開 Demo。
 本文件取代 W3-B／W006「一定要提供可信 Proxy IP 才能啟動」的指示。
-本次只修正、測試、Commit／Push，沒有登入 Render、建立服務、付費資源或公開部署。
+Web v1 已由 Hao 部署至 [Live Demo](https://csv-validator-uw1g.onrender.com/)，公開驗收程式碼為 9436f21。
+Hao 回報八項公開驗收通過，包含手機與 Logs；W008 僅整理文件，沒有重新部署或變更方案。
 
 **CSV／Schema 會傳至伺服器，不是只在本機私密轉換；不要上傳敏感或機密資料。**
 
@@ -116,7 +117,8 @@ API 活躍上限 2；Uvicorn limit_concurrency=8、backlog=16，無等待中的�
 
 ## 5. Hao 在 Dashboard 的完整操作順序
 
-以下由 Hao 日後親自操作，本次 Codex 不建立服務：
+目前服務已存在，**不用為文件收尾重複建立服務**。第 1～5 步保留給未來另建服務時參考，
+現有服務的 Logs、驗收、重部署與停用見第 6～10 步；這些動作由 Hao 親自操作。
 
 1. 登入 Render，確認 GitHub 授權只涵蓋需要的 csv-validator。
 2. New → Web Service → Git Provider，選 WJHaoooo/csv-validator；
@@ -198,5 +200,6 @@ python scripts/audit_dependencies.py
 ~~~
 
 另建 .venv-test 安裝 .[web,dev] 後跑 pytest，不將 dev 混入 production。
-本機結果與日期見 README；實際 Render 建置、TLS redirect、網域／health、資源、日誌與帳務
-都必須在 Hao 首次部署後驗證。本次沒有宣稱已在 Render 成功上線。
+本機結果與日期見 [README](../README.md)。Hao 已完成公開環境八項功能驗收；
+本次僅獨立 GET 確認公開首頁及 /health 為 200，沒有重跑公開上傳、查閱私有 Logs 或變更帳務。
+未來每次改版仍須核對實際 Render 建置、TLS、Host／Origin、用量、日誌與費用。
